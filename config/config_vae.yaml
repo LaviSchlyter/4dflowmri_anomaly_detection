@@ -1,0 +1,26 @@
+# =================================== TRAINING SETTINGS ===================================
+batch_size: 3
+init_batches: 64
+
+spatial_size_x: 144
+spatial_size_y: 112
+spatial_size_t: 48
+
+epochs: 30
+
+
+#box_factor: 0
+bottleneck_factor: 0
+z_dim: 2888
+
+lr: 5.0e-5
+lr_decay_begin: 100
+#lr_decay_end: 200 # This is the epoch number
+log_freq: 250
+ckpt_freq: 1000
+test_freq: 1000
+drop_prob: 0.1
+
+
+# =================================== LOGGING SETTINGS ===================================
+validation_frequency: 10
