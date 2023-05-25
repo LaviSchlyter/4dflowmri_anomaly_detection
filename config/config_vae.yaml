@@ -6,7 +6,7 @@ spatial_size_x: 144
 spatial_size_y: 112
 spatial_size_t: 48
 
-epochs: 30
+epochs: 2
 
 
 #box_factor: 0
@@ -21,6 +21,19 @@ ckpt_freq: 1000
 test_freq: 1000
 drop_prob: 0.1
 
+do_data_augmentation: False
+gen_loss_factor: 100 # How much more the reconstruction loss is weighted 
+
 
 # =================================== LOGGING SETTINGS ===================================
-validation_frequency: 10
+validation_frequency: 2
+
+
+# # =================================== CONTINUE TRAINING ===================================
+model_directory : 
+model_name : 'test_square'
+latest_model_epoch : 
+model:
+checkpoint:
+continue_training:
+preprocess_method:
