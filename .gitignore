@@ -165,3 +165,5 @@ data/*
 logs/*
 wandb/*
 .vscode/*
+sbatch_log/*
+
