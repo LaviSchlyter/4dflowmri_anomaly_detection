@@ -4,8 +4,10 @@ import numpy as np
 import sys
 from skimage.morphology import skeletonize_3d, dilation, cube, binary_erosion
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/helpers/')
-sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
+
 from utils import crop_or_pad_Bern_slices, normalize_image, normalize_image_new, make_dir_safely, crop_or_pad_4dvol, crop_or_pad_normal_slices
+sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
+
 
 import config.system as sys_config
 import SimpleITK as sitk
@@ -290,7 +292,6 @@ def prepare_and_write_masked_data_bern(basepath,
 
 
 def load_masked_data(basepath,
-                             savepath,
               idx_start,
               idx_end,
               train_test,
@@ -299,6 +300,7 @@ def load_masked_data(basepath,
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    savepath = sys_config.project_code_root + 'data'
     dataset_filepath = savepath + f'/{train_test}_masked_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
@@ -511,7 +513,6 @@ def prepare_and_write_sliced_data_bern(basepath,
 # ==========================================
 # ==========================================
 def load_cropped_data_sliced(basepath,
-                                  savepath,
               idx_start,
               idx_end,
               train_test,
@@ -520,6 +521,7 @@ def load_cropped_data_sliced(basepath,
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    savepath = sys_config.project_code_root + 'data'
     dataset_filepath = savepath + f'/{train_test}_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
@@ -619,7 +621,7 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 
         # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
         time_steps = segmented_original.shape[3]
-        segmented = dilation(segmented_original[:,:,:,7], cube(3))
+        segmented = dilation(segmented_original[:,:,:,3], cube(6))
 
         temp_for_stack = [segmented for i in range(time_steps)]
         segmented = np.stack(temp_for_stack, axis=3)
@@ -641,11 +643,11 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         
 
         if cnn_predictions:
-            points_ = skeleton_points(segmented, dilation_k = 0)
-            points_dilated = skeleton_points(segmented, dilation_k = 4,erosion_k = 4)
+            points_ = skeleton_points(segmented_original, dilation_k = 0)
+            points_dilated = skeleton_points(segmented_original, dilation_k = 4,erosion_k = 4)
         else:
-            points_ = skeleton_points(segmented, dilation_k = 0)
-            points_dilated = skeleton_points(segmented, dilation_k = 2,erosion_k = 2)
+            points_ = skeleton_points(segmented_original, dilation_k = 0)
+            points_dilated = skeleton_points(segmented_original, dilation_k = 2,erosion_k = 2)
         points = points_dilated.copy()
 
         """
@@ -719,7 +721,6 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 # ==========================================
 # ==========================================
 def load_masked_data_sliced(basepath,
-                                 savepath,
               idx_start,
               idx_end,
               train_test,
@@ -729,6 +730,7 @@ def load_masked_data_sliced(basepath,
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    savepath = sys_config.project_code_root + 'data'
     dataset_filepath = savepath + f'/{train_test}_masked_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
@@ -941,7 +943,6 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
 # ==========================================
 # ==========================================
 def load_cropped_data_sliced_full_aorta(basepath,
-                                  savepath,
               idx_start,
               idx_end,
               train_test,
@@ -950,6 +951,7 @@ def load_cropped_data_sliced_full_aorta(basepath,
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    savepath = sys_config.project_code_root + 'data'
     dataset_filepath = savepath + f'/{train_test}_sliced_images_full_aorta_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
@@ -1053,7 +1055,7 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 
         # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
         time_steps = segmented_original.shape[3]
-        segmented = dilation(segmented_original[:,:,:,7], cube(3))
+        segmented = dilation(segmented_original[:,:,:,3], cube(6))
 
         temp_for_stack = [segmented for i in range(time_steps)]
         segmented = np.stack(temp_for_stack, axis=3)
@@ -1075,11 +1077,11 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
         
 
         if cnn_predictions:
-            points_ = skeleton_points(segmented, dilation_k = 0)
-            points_dilated = skeleton_points(segmented, dilation_k = 4,erosion_k = 4)
+            points_ = skeleton_points(segmented_original, dilation_k = 0)
+            points_dilated = skeleton_points(segmented_original, dilation_k = 4,erosion_k = 4)
         else:
-            points_ = skeleton_points(segmented, dilation_k = 0)
-            points_dilated = skeleton_points(segmented, dilation_k = 2,erosion_k = 2)
+            points_ = skeleton_points(segmented_original, dilation_k = 0)
+            points_dilated = skeleton_points(segmented_original, dilation_k = 2,erosion_k = 2)
         points = points_dilated.copy()
 
         """
@@ -1146,7 +1148,6 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 # ==========================================
 # ==========================================
 def load_masked_data_sliced_full_aorta(basepath,
-                                 savepath,
               idx_start,
               idx_end,
               train_test,
@@ -1156,6 +1157,7 @@ def load_masked_data_sliced_full_aorta(basepath,
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    savepath = sys_config.project_code_root + 'data'
     dataset_filepath = savepath + f'/{train_test}_masked_sliced_images_full_aorta_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
@@ -1183,20 +1185,20 @@ if __name__ == '__main__':
     savepath = sys_config.project_code_root + "data"
     make_dir_safely(savepath)
 
-    masked_data_train = load_masked_data(basepath, savepath=savepath, idx_start=0, idx_end=5, train_test='train')
-    masked_data_validation = load_masked_data(basepath, savepath=savepath, idx_start=5, idx_end=10, train_test='val')
+    masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=5, train_test='train')
+    masked_data_validation = load_masked_data(basepath, idx_start=5, idx_end=8, train_test='val')
 
-    sliced_data_train = load_cropped_data_sliced(basepath, savepath=savepath, idx_start=0, idx_end=5, train_test='train')
-    sliced_data_validation = load_cropped_data_sliced(basepath, savepath=savepath, idx_start=5, idx_end=10, train_test='val')
+    sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=5, train_test='train')
+    sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=5, idx_end=8, train_test='val')
     
-    masked_sliced_data_train = load_masked_data_sliced(basepath, savepath=savepath, idx_start=0, idx_end=5, train_test='train')
-    masked_sliced_data_validation = load_masked_data_sliced(basepath, savepath=savepath, idx_start=5, idx_end=10, train_test='val')    
+    masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=5, train_test='train')
+    masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=4, idx_end=8, train_test='val')    
 
-    sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, savepath=savepath, idx_start=0, idx_end=5, train_test='train')
-    sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, savepath=savepath, idx_start=5, idx_end=10, train_test='val')
+    sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=5, train_test='train')
+    sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=5, idx_end=8, train_test='val')
 
-    masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, savepath=savepath, idx_start=0, idx_end=5, train_test='train')
-    masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, savepath=savepath, idx_start=5, idx_end=10, train_test='val')
+    masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=5, train_test='train')
+    masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=5, idx_end=8, train_test='val')
 
     
     

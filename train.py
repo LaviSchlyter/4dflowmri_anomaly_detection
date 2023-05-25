@@ -4,6 +4,7 @@
 import os
 
 import torch 
+import tqdm
 import yaml
 import argparse
 import logging
@@ -20,19 +21,16 @@ import wandb
 from helpers import data_bern_numpy_to_preprocessed_hdf5
 from helpers import data_bern_numpy_to_hdf5
 from helpers.utils import make_dir_safely
+from helpers.run import train, load_model, evaluate
+from helpers.data_loader import load_data
+
+
 
 # =================================================================================
 # ============== IMPORT MODELS ==================================================
 # =================================================================================
 
 from models.vae import VAE
-
-# =================================================================================
-# ============== Train function ==================================================
-# =================================================================================
-
-
-
 
 # =================================================================================
 # ============== MAIN FUNCTION ==================================================
@@ -43,283 +41,92 @@ if __name__ ==  "__main__":
     # Parse the arguments
     parser = argparse.ArgumentParser(description='Train a VAE model.')
     parser.add_argument('--model', type=str, default="vae", help='Model to train.')
-    parser.add_argument('--model_name', type=str, default=0, help='Name of the model.')
-    parser.add_argument('--config', type=str, required= True, help='Path to the config file.')
+    parser.add_argument('--model_name', type=str, default='0', help='Name of the model.')
+    parser.add_argument('--config_path', type=str, required= True, help='Path to the config file.')
     parser.add_argument('--checkpoint', type=str, default="logs", help='Path to the checkpoint file to restore.')
     parser.add_argument('--continue_training', type=bool, default=False, help='Continue training from checkpoint.')
     #parser.add_argument('--train', type=str)
     #parser.add_argument('--val', type=str)
-    parser.add_argument('--preprocess', type=str)
+    parser.add_argument('--preprocess_method', type=str)
+    # Adding the next ones to enable parameter sweeps but they are defined in the yaml file
+    parser.add_argument('--epochs', type=int)
+    parser.add_argument('--batch_size', type=int)
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--do_data_augmentation', type=bool)
+    parser.add_argument('--gen_loss_factor', type=float)
+    parser.add_argument('--z_dim', type=int)
 
     args = parser.parse_args()
 
-    with open(args.config, 'r') as file:
+    with open(args.config_path, 'r') as file:
         config = yaml.safe_load(file)
 
     
     # Combine arguments with config file
     for arg, value in vars(args).items():
-        setattr(config, arg, value)
+        if value is not None:
+            config[arg] = value
     
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f"Using device: {device}")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
 
-    # Generate a timestamp string
-    timestamp = datetime.datetime.now().strftime("%y%m%d_%H%M")
-
-    with wandb.init(project="4dflowmri_anomaly_detection", config=config, tags= ['debug']):
-        config = wandb.config
+    if str(config['model_name']) != str(0):
+        
+        # Costume name given
+        pass
+    else:
+        config['model_name'] =  f"{timestamp}_{config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-zdim{config['z_dim']}-da{config['do_data_augmentation']}"
     
+    wandb_mode = "online" # online/ disabled
 
-        # ======= MODEL CONFIGURATION =======
-        model = config['model']
+    with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= ['debug']):
+        config = wandb.config
+        print('after_init', config['model_name'])
 
         
-        model_name = config['model_name']
-
-        preprocess_method = config['preprocess']
-        continue_training = config['continue_training']
-
-        savepath = config_sys['project_code_root'] + "data"
-
-        # ======= TRAINING PARAMETERS CONFIGURATION =======
-
-        epochs = config['epochs']
-        batch_size = config['batch_size']
-        learning_rate = config['learning_rate']
-        z_dim = config['z_dim']
-        
+        # Check if it is a sweep
+        sweep_id = os.environ.get("WANDB_SWEEP_ID")
+        if sweep_id:
+            # We add a level for the sweep name 
+            config['exp_path'] = os.path.join(config_sys.log_root, config['model'],config['preprocess_method'], sweep_id,config['model_name'])
+        else:
+            config['exp_path'] = os.path.join(config_sys.log_root, config['model'],config['preprocess_method'], config['model_name'])
+        log_dir = config['exp_path']
         # ================================================
         # ======= LOGGING CONFIGURATION ==================
         # ================================================
-
-        project_data_root = config_sys['project_data_root']
-        project_code_root = config_sys['project_code_root']
-        
-        # The log directory is namedafter the model and the experiment run name
-        log_dir = os.path.join(config_sys['log_root'], model, model_name +'_'+ timestamp)
-
+        project_data_root = config_sys.project_data_root
+        project_code_root = config_sys.project_code_root
         # Create the log directory if it does not exist
         make_dir_safely(log_dir)
         logging.info('=============================================================================')
         logging.info(f"Logging to {log_dir}")
         logging.info('=============================================================================')
-
         # ================================================
-        # ======= DATA CONFIGURATION =====================
+        # ======= DATA CONFIGURATION LOADING =====================
         # ================================================
-
-        if preprocess_method == 'none':
-
-            logging.info('=============================================================================')
-            logging.info(f"Preprocessing method: {preprocess_method}")
-            logging.info('Loading training data from: {}'.format(project_data_root))
-
-            data_tr = data_bern_numpy_to_hdf5.load_data(basepath=project_data_root, 
-                                                        idx_start=0, 
-                                                        idx_end=5, 
-                                                        mode='train',
-                                                        savepath = savepath)
-            
-
-            images_tr = data_tr['images_train']            
-            labels_tr = data_tr['labels_train']    
-            logging.info(type(images_tr))    
-            logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('Shape of training labels: %s' %str(labels_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t]
-
-            logging.info('=============================================================================')
-            logging.info('Loading validation data from: {}'.format(project_data_root))
-
-            data_vl = data_bern_numpy_to_hdf5.load_data(basepath=project_data_root,
-                                                        idx_start=5,
-                                                        idx_end=10,
-                                                        mode='val',
-                                                        savepath=savepath)
-            
-            images_vl = data_vl['images_val']
-            labels_vl = data_vl['labels_val']
-            logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('Shape of validation labels: %s' %str(labels_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t]
-
-        # ================================================
-        # === If mask preprocessing is selected ==========
-        # ================================================
-        elif preprocess_method == 'mask':
-
-            logging.info('=============================================================================')
-            logging.info(f"Preprocessing method: {preprocess_method}")
-            logging.info('Loading training data from: {}'.format(project_data_root))
-
-            data_tr = data_bern_numpy_to_preprocessed_hdf5.load_masked_data(basepath=project_data_root,
-                                                                            idx_start=0,
-                                                                            idx_end=5,
-                                                                            mode='train',
-                                                                            savepath=savepath)
-            
-            images_tr = data_tr['masked_images_train']
-            logging.info(type(images_tr))
-            logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-
-            logging.info('=============================================================================')
-            logging.info('Loading validation data from: {}'.format(project_data_root))
-
-            data_vl = data_bern_numpy_to_preprocessed_hdf5.load_masked_data(basepath=project_data_root,
-                                                                            idx_start=5,
-                                                                            idx_end=10,
-                                                                            mode='val',
-                                                                            savepath=savepath)
-            
-            images_vl = data_vl['masked_images_val']
-            logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('=============================================================================')
+        # Load the data
+        images_tr, images_vl = load_data(config, config_sys, idx_start_tr=0, idx_end_tr=5, idx_start_vl=5, idx_end_vl=8)
         
-        # ================================================
-        # === If slicing preprocessing is selected ==========
-
-        elif preprocess_method == 'slice':
-
-            logging.info('=============================================================================')
-            logging.info(f"Preprocessing method: {preprocess_method}")
-            logging.info('Loading training data from: {}'.format(project_data_root))
-
-            data_tr = data_bern_numpy_to_preprocessed_hdf5.load_cropped_data_sliced(basepath=project_data_root,
-                                                                                    idx_start=0,
-                                                                                    idx_end=5,
-                                                                                    mode='train',
-                                                                                    savepath=savepath)
-            
-            images_tr = data_tr['sliced_images_train']
-            logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('=============================================================================')
-
-            logging.info('=============================================================================')
-            logging.info('Loading validation data from: {}'.format(project_data_root))
-
-            data_vl = data_bern_numpy_to_preprocessed_hdf5.load_cropped_data_sliced(basepath=project_data_root,
-                                                                                    idx_start=5,
-                                                                                    idx_end=10,
-                                                                                    mode='val',
-                                                                                    savepath=savepath)
-            
-            images_vl = data_vl['sliced_images_val']
-            logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('=============================================================================')
-
-        # ================================================
-        # ==== If masked slicing preprocessing is selected
-        # ================================================
-
-        elif preprocess_method == 'masked_slice':
-
-            logging.info('=============================================================================')
-            logging.info(f"Preprocessing method: {preprocess_method}")
-            logging.info('Loading training data from: {}'.format(project_data_root))
-
-            data_tr = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath=project_data_root,
-                                                                                    idx_start=0,
-                                                                                    idx_end=5,
-                                                                                    mode='train',
-                                                                                    savepath=savepath)
-            
-            images_tr = data_tr['sliced_images_train']
-            logging.info(type(images_tr))
-            logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            
-            logging.info('=============================================================================')
-            logging.info('Loading validation data from: {}'.format(project_data_root))
-
-            data_vl = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath=project_data_root,
-                                                                                    idx_start=5,
-                                                                                    idx_end=10,
-                                                                                    mode='val',
-                                                                                    savepath=savepath)
-            
-            images_vl = data_vl['sliced_images_val']
-            logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('=============================================================================')
-
-        
-        # ================================================
-        # ==== if sliced full aorta preprocessing is selected
-        # ================================================
-        elif preprocess_method == 'sliced_full_aorta':
-
-            logging.info('=============================================================================')
-            logging.info(f"Preprocessing method: {preprocess_method}")
-            logging.info('Loading training data from: {}'.format(project_data_root))
-
-            data_tr = data_bern_numpy_to_preprocessed_hdf5.load_cropped_data_sliced_full_aorta(basepath=project_data_root,
-                                                                                                idx_start=0,
-                                                                                                idx_end=5,
-                                                                                                mode='train',
-                                                                                                savepath=savepath)
-            
-            images_tr = data_tr['sliced_images_train']
-            logging.info(type(images_tr))
-            logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-
-            logging.info('=============================================================================')
-            logging.info('Loading validation data from: {}'.format(project_data_root))
-
-            data_vl = data_bern_numpy_to_preprocessed_hdf5.load_cropped_data_sliced_full_aorta(basepath=project_data_root,
-                                                                                                idx_start=5,
-                                                                                                idx_end=10,
-                                                                                                mode='val',
-                                                                                                savepath=savepath)
-            
-            images_vl = data_vl['sliced_images_val']
-            logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('=============================================================================')
-
-        # ================================================
-        # ==== if masked sliced full aorta preprocessing is selected
-        # ================================================
-
-        elif preprocess_method == 'masked_sliced_full_aorta':
-
-            logging.info('=============================================================================')
-            logging.info(f"Preprocessing method: {preprocess_method}")
-            logging.info('Loading training data from: {}'.format(project_data_root))
-
-            data_tr = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced_full_aorta(basepath=project_data_root,
-                                                                                                idx_start=0,
-                                                                                                idx_end=5,
-                                                                                                mode='train',
-                                                                                                savepath=savepath)
-            
-            images_tr = data_tr['sliced_images_train']
-            logging.info(type(images_tr))
-            logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-
-            logging.info('=============================================================================')
-            logging.info('Loading validation data from: {}'.format(project_data_root))
-
-            data_vl = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced_full_aorta(basepath=project_data_root,
-                                                                                                idx_start=5,
-                                                                                                idx_end=10,
-                                                                                                mode='val',
-                                                                                                savepath=savepath)
-            
-            images_vl = data_vl['sliced_images_val']
-            logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
-            logging.info('=============================================================================')
-        else:
-            raise ValueError(f"Preprocessing method {preprocess_method} not implemented.")
-
-
-
         # ================================================
         # Initialize the model, training parameters, model name and logging
         # ================================================
-
-        # Initialize the model
-        if model == 'vae':
-            model = VAE()
+        if config['model'] == 'vae':
+            model = VAE(z_dim=config['z_dim'], in_channels=4, gf_dim=8).to(device)
         else:
             raise ValueError(f"Unknown model: {model}")
         
-        if continue_training:
-            pass
         
+        if config['continue_training']:
+            continue_train_path = os.path.join(project_code_root, config["model_directory"])
+            model = load_model(model, continue_train_path, config["latest_model_epoch"])
+            already_completed_epochs = config['latest_model_epoch']
+        else:
+            already_completed_epochs = 0
+
+        # Train 
+        optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
+        train(model, images_tr, images_vl, log_dir, already_completed_epochs, config, device, optimizer)
+

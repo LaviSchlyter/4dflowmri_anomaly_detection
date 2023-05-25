@@ -119,12 +119,13 @@ def load_data(basepath,
               idx_start,
               idx_end,
               train_test,
-              savepath,
               force_overwrite=False):
 
     # ==========================================
     # define file paths for images and labels
     # ==========================================
+    savepath = sys_config.project_code_root + "data"
+    make_dir_safely(savepath)
     dataset_filepath = savepath + f'/{train_test}_images_and_labels_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
@@ -145,7 +146,5 @@ def load_data(basepath,
 if __name__ == "__main__":
 
     basepath =  sys_config.project_data_root #"/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady"
-    savepath = sys_config.project_code_root + "data"
-    make_dir_safely(savepath)
-    data_train = load_data(basepath, savepath=savepath, idx_start=0, idx_end=5, train_test='train')
-    data_val = load_data(basepath, savepath=savepath, idx_start=5, idx_end=10, train_test='val')
+    data_train = load_data(basepath, idx_start=0, idx_end=5, train_test='train')
+    data_val = load_data(basepath, idx_start=5, idx_end=10, train_test='val')

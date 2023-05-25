@@ -1,6 +1,30 @@
 import os 
 import numpy as np
 from scipy.ndimage import gaussian_filter
+from loss_functions import l2loss, kl_loss_1d
+import torch
+
+# ==================================================================
+# ==================================================================
+# Compute losses
+# ==================================================================
+# ==================================================================
+
+def compute_losses(input_images, output_images, z_mean, z_std, res):
+    """
+    Computes the losses for the output images, the latent space and the residual
+    """
+    # Compute the reconstruction loss
+    gen_loss = l2loss(input_images, output_images)
+
+    # Compute the residual loss
+    true_res = torch.abs(input_images - output_images)
+    res_loss = l2loss(true_res, res)
+
+    # Compute the latent loss
+    lat_loss = kl_loss_1d(z_mean, z_std)    
+    
+    return gen_loss, res_loss, lat_loss
 
 # ==========================================        
 # function to normalize the input arrays (intensity and velocity) to a range between 0 to 1.
@@ -213,3 +237,5 @@ def crop_or_pad_4dvol(vol, target_size):
     vol = crop_or_pad_4dvol_along_3(vol, target_size[3])
                 
     return vol
+
+
