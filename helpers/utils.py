@@ -3,6 +3,26 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from loss_functions import l2loss, kl_loss_1d
 import torch
+import sys
+sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
+import config.system as sys_config
+
+
+# ==================================================================
+# Verify leakage
+# ==================================================================
+def verify_leakage():
+    basepath =  sys_config.project_data_root
+    train_val = basepath + '/final_segmentations/train_val'
+    test = basepath + '/final_segmentations/test'
+    train_val_files = set(os.listdir(train_val))
+    test_files = set(os.listdir(test))
+    overlap = train_val_files.intersection(test_files)
+    if overlap:
+        raise ValueError('There is leakage between train_val and test')
+
+
+
 
 # ==================================================================
 # ==================================================================
@@ -143,15 +163,20 @@ def crop_or_pad_normal_slices(data, new_shape):
     # axis 1 is the y-axis and we crop equally from both sides
     # axis 2 is the z-axis and we crop from the right (end of the image) since aorta is at the left
     delta_axis0 = data.shape[0] - new_shape[0]
-    delta_axis1 = data.shape[1] - new_shape[1]
-    delta_axis2 = data.shape[2] - new_shape[2]
+    
     if len(new_shape) == 5: # Image
         # The x is always cropped, y always padded, z_cropped
-        processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
+        try:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
+        except:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],:new_shape[3],...]
 
     if len(new_shape) == 4: # Label
         # The x is always cropped, y always padded, z_cropped
-        processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
+        try:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
+        except:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],:new_shape[3],...]
     return processed_data
 
 
@@ -163,11 +188,20 @@ def crop_or_pad_Bern_slices(data, new_shape):
     delta_axis0 = data.shape[0] - new_shape[0]
     if len(new_shape) == 5: # Image
         # The x is always cropped, y always padded, z_cropped
-        processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
+        try:
+            # Pad time
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
+        except:
+            # Crop time
+            processed_data[:, :data.shape[1],:,:,... ] = data[delta_axis0:,:, :new_shape[2],:new_shape[3],...]
 
     if len(new_shape) == 4: # Label
         # The x is always cropped, y always padded, z_cropped
-        processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
+        try:
+            
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
+        except:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],:new_shape[3],...]
     return processed_data
 
 # ==================================================================

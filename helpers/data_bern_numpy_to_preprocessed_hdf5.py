@@ -5,7 +5,7 @@ import sys
 from skimage.morphology import skeletonize_3d, dilation, cube, binary_erosion
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/helpers/')
 
-from utils import crop_or_pad_Bern_slices, normalize_image, normalize_image_new, make_dir_safely, crop_or_pad_4dvol, crop_or_pad_normal_slices
+from utils import verify_leakage ,crop_or_pad_Bern_slices, normalize_image, normalize_image_new, make_dir_safely, crop_or_pad_normal_slices
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
 
 
@@ -194,9 +194,9 @@ def prepare_and_write_masked_data_bern(basepath,
     # This shape must be the same in the file where all the training parameters are set!
     # ==========================================
     # For Bern the max sizes are:
-    # x: 144, y: 112, z: 64, t: 33 (but because of network we keep 48)
-    common_image_shape = [144, 112, 40, 48, 4] # [x, y, z, t, num_channels]
-    common_label_shape = [144, 112, 40, 48] # [x, y, z, t]
+    # x: 144, y: 112, z: 64, t: 33 (but because of network we keep 48) nope we actually going for 24 cause 33 is only very few people
+    common_image_shape = [144, 112, 40, 24, 4] # [x, y, z, t, num_channels]
+    common_label_shape = [144, 112, 40, 24] # [x, y, z, t]
     # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
     # (not required, but this makes it nice while training CNNs)
 
@@ -204,10 +204,11 @@ def prepare_and_write_masked_data_bern(basepath,
     # ==========================================
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/controls'
+        seg_path = basepath + '/final_segmentations/train_val'
         img_path = basepath + '/preprocessed/controls/numpy'
     elif train_test == 'test':
-        seg_path = basepath + '/final_segmentations/patients'
+        # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
+        seg_path = basepath + '/final_segmentations/test'
         img_path = basepath + '/preprocessed/patients/numpy'
     else:
         raise ValueError('train_test must be either train, val or test')
@@ -245,19 +246,28 @@ def prepare_and_write_masked_data_bern(basepath,
         print('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load)  + '...')
         print('patient', patient)
         
-        image_data = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        if ['train', 'val'].__contains__(train_test):
+            image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        elif train_test == 'test':
+            # We need to look into the patients folder or the controls folder, try both
+            try:
+                # With patients
+                image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+            except:
+                # With controls
+                image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
         
         # normalize the image
-        image_data = normalize_image_new(image_data)
-        print('Shape of image before network resizing',image_data.shape)
+        image = normalize_image_new(image)
+        print('Shape of image before network resizing',image.shape)
         # The images need to be sized as in the input of network
         
         
         # make all images of the same shape
-        image_data = crop_or_pad_Bern_slices(image_data, common_image_shape)
-        print('Shape of image after network resizing',image_data.shape)
+        image = crop_or_pad_Bern_slices(image, common_image_shape)
+        print('Shape of image after network resizing',image.shape)
         # move the z-axis to the front, as we want to concantenate data along this axis
-        image_data = np.moveaxis(image_data, 2, 0)
+        image = np.moveaxis(image, 2, 0)
 
         label_data = np.load(os.path.join(seg_path, patient))
         # make all images of the same shape
@@ -268,16 +278,16 @@ def prepare_and_write_masked_data_bern(basepath,
         label_data = label_data.astype(np.uint8)
 
 
-        temp_images_intensity = image_data[:,:,:,:,0] * label_data
-        temp_images_vx = image_data[:,:,:,:,1] * label_data
-        temp_images_vy = image_data[:,:,:,:,2] * label_data
-        temp_images_vz = image_data[:,:,:,:,3] * label_data
+        temp_images_intensity = image[:,:,:,:,0] * label_data
+        temp_images_vx = image[:,:,:,:,1] * label_data
+        temp_images_vy = image[:,:,:,:,2] * label_data
+        temp_images_vz = image[:,:,:,:,3] * label_data
 
         #recombine the images
-        image_data = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
+        image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
 
         # add the image to the hdf5 file
-        dataset['masked_images_%s' % train_test][i*common_image_shape[2]:(i+1)*common_image_shape[2], :, :, :, :] = image_data
+        dataset['masked_images_%s' % train_test][i*common_image_shape[2]:(i+1)*common_image_shape[2], :, :, :, :] = image
 
         # increment the index being used to write in the hdf5 datasets
         i = i + 1
@@ -334,11 +344,11 @@ def prepare_and_write_sliced_data_bern(basepath,
     # ==========================================
     # This shape must be the same in the file where all the training parameters are set!
     # ==========================================
-    common_image_shape = [36, 36, 64, 48, 4] # [x, y, z, t, num_channels]
+    common_image_shape = [36, 36, 64, 24, 4] # [x, y, z, t, num_channels]
 
-    #network_common_image_shape = [144, 112, None, 48, 4] # [x, y, t, num_channels]
+    #network_common_image_shape = [144, 112, None, 24, 4] # [x, y, t, num_channels]
 
-    end_shape = [32, 32, 64, 48, 4]
+    end_shape = [32, 32, 64, 24, 4]
     # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
     # (not required, but this makes it nice while training CNNs)
     
@@ -350,10 +360,11 @@ def prepare_and_write_sliced_data_bern(basepath,
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/controls'
+        seg_path = basepath + '/final_segmentations/train_val'
         img_path = basepath + '/preprocessed/controls/numpy'
     elif train_test == 'test':
-        seg_path = basepath + '/final_segmentations/patients'
+        # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
+        seg_path = basepath + '/final_segmentations/test'
         img_path = basepath + '/preprocessed/patients/numpy'
     else:
         raise ValueError('train_test must be either train, val or test')
@@ -413,7 +424,16 @@ def prepare_and_write_sliced_data_bern(basepath,
             cnn_predictions = False
 
         # load the segmentation that was created with Nicolas's tool
-        image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        if ['train', 'val'].__contains__(train_test):
+            image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        elif train_test == 'test':
+            # We need to look into the patients folder or the controls folder, try both
+            try:
+                # With patients
+                image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+            except:
+                # With controls
+                image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
         
         
         segmented = np.load(os.path.join(seg_path, patient))
@@ -558,9 +578,9 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # ==========================================
     # This shape must be the same in the file where all the training parameters are set!
     # ==========================================
-    common_image_shape = [36, 36, 64, 48, 4] # [x, y, z, t, num_channels]
+    common_image_shape = [36, 36, 64, 24, 4] # [x, y, z, t, num_channels]
     
-    end_shape = [32, 32, 64, 48, 4]
+    end_shape = [32, 32, 64, 24, 4]
     # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
     # (not required, but this makes it nice while training CNNs)
 
@@ -571,10 +591,11 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/controls'
+        seg_path = basepath + '/final_segmentations/train_val'
         img_path = basepath + '/preprocessed/controls/numpy'
     elif train_test == 'test':
-        seg_path = basepath + '/final_segmentations/patients'
+        # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
+        seg_path = basepath + '/final_segmentations/test'
         img_path = basepath + '/preprocessed/patients/numpy'
     else:
         raise ValueError('train_test must be either train, val or test')
@@ -615,7 +636,16 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         if patient in list_hand_seg_images:
             cnn_predictions = False
         
-        image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        if ['train', 'val'].__contains__(train_test):
+            image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        elif train_test == 'test':
+            # We need to look into the patients folder or the controls folder, try both
+            try:
+                # With patients
+                image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+            except:
+                # With controls
+                image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
         segmented_original = np.load(os.path.join(seg_path, patient))
         
 
@@ -767,11 +797,11 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
     # ==========================================
     # This shape must be the same in the file where all the training parameters are set!
     # ==========================================
-    common_image_shape = [36, 36, 256, 48, 4] # [x, y, z, t, num_channels]
+    common_image_shape = [36, 36, 256, 24, 4] # [x, y, z, t, num_channels]
 
-    #network_common_image_shape = [144, 112, None, 48, 4] # [x, y, t, num_channels]
+    #network_common_image_shape = [144, 112, None, 24, 4] # [x, y, t, num_channels]
 
-    end_shape = [32, 32, 256, 48, 4]
+    end_shape = [32, 32, 256, 24, 4]
     # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
     # (not required, but this makes it nice while training CNNs)
     
@@ -784,13 +814,15 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
 
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/controls'
+        seg_path = basepath + '/final_segmentations/train_val'
         img_path = basepath + '/preprocessed/controls/numpy'
     elif train_test == 'test':
-        seg_path = basepath + '/final_segmentations/patients'
+        # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
+        seg_path = basepath + '/final_segmentations/test'
         img_path = basepath + '/preprocessed/patients/numpy'
     else:
         raise ValueError('train_test must be either train, val or test')
+    
     
     patients = os.listdir(seg_path)[idx_start:idx_end]
     num_images_to_load = len(patients)
@@ -846,7 +878,16 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
             cnn_predictions = False
 
         # load the segmentation that was created with Nicolas's tool
-        image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        if ['train', 'val'].__contains__(train_test):
+            image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        elif train_test == 'test':
+            # We need to look into the patients folder or the controls folder, try both
+            try:
+                # With patients
+                image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+            except:
+                # With controls
+                image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
         
         
         segmented = np.load(os.path.join(seg_path, patient))
@@ -988,9 +1029,9 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
     # ==========================================
     # This shape must be the same in the file where all the training parameters are set!
     # ==========================================
-    common_image_shape = [36, 36, 256, 48, 4] # [x, y, z, t, num_channels]
+    common_image_shape = [36, 36, 256, 24, 4] # [x, y, z, t, num_channels]
     
-    end_shape = [32, 32, 256, 48, 4]
+    end_shape = [32, 32, 256, 24, 4]
     # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
     # (not required, but this makes it nice while training CNNs)
 
@@ -1002,13 +1043,15 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/controls'
+        seg_path = basepath + '/final_segmentations/train_val'
         img_path = basepath + '/preprocessed/controls/numpy'
     elif train_test == 'test':
-        seg_path = basepath + '/final_segmentations/patients'
+        # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
+        seg_path = basepath + '/final_segmentations/test'
         img_path = basepath + '/preprocessed/patients/numpy'
     else:
         raise ValueError('train_test must be either train, val or test')
+    
     
     patients = os.listdir(seg_path)[idx_start:idx_end]
     num_images_to_load = len(patients)
@@ -1049,7 +1092,16 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
         if patient in list_hand_seg_images:
             cnn_predictions = False
         
-        image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        if ['train', 'val'].__contains__(train_test):
+            image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+        elif train_test == 'test':
+            # We need to look into the patients folder or the controls folder, try both
+            try:
+                # With patients
+                image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+            except:
+                # With controls
+                image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
         segmented_original = np.load(os.path.join(seg_path, patient))
         
 
@@ -1185,20 +1237,29 @@ if __name__ == '__main__':
     savepath = sys_config.project_code_root + "data"
     make_dir_safely(savepath)
 
+    # Make sure that any patient from the training/validation set is not in the test set
+    verify_leakage()
+
     masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=5, train_test='train')
     masked_data_validation = load_masked_data(basepath, idx_start=5, idx_end=8, train_test='val')
+    masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=2, train_test='test')
+    
 
     sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=5, train_test='train')
     sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=5, idx_end=8, train_test='val')
+    sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=2, train_test='test')
     
-    masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=5, train_test='train')
-    masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=4, idx_end=8, train_test='val')    
+    masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
+    masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')    
+    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=20, train_test='test')
 
     sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=5, train_test='train')
     sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=5, idx_end=8, train_test='val')
+    sliced_data_full_aorta_test = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=2, train_test='test')
 
     masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=5, train_test='train')
     masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=5, idx_end=8, train_test='val')
+    masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=2, train_test='test')
 
     
     

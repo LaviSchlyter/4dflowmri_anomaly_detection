@@ -27,8 +27,8 @@ def prepare_and_write_data_bern(basepath,
     # This shape must be the same in the file where all the training parameters are set!
     # Update: We keep all the Bern data and leave the batch dimension open to their original size
     # ==========================================
-    common_image_shape = [144, 112, 40, 48, 4] # [x, y, t, num_channels]
-    common_label_shape = [144, 112, 40, 48] # [x, y,t]
+    common_image_shape = [144, 112, 40, 24, 4] # [x, y, t, num_channels]
+    common_label_shape = [144, 112, 40, 24] # [x, y,t]
     # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
     # (not required, but this makes it nice while training CNNs)
     
