@@ -3,15 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-
 class ResBlockDown(nn.Module):
-    def __init__(self, filters_in, filters_out, act=True):
+    def __init__(self, filters_in, filters_out, act=True, stride = (2,2,2)):
         super(ResBlockDown, self).__init__()
-        self.conv1 = nn.Conv3d(filters_in, filters_in, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1)
+        self.conv1 = nn.Conv3d(filters_in, filters_in, kernel_size=(3, 3, 3), stride=stride, padding=1)
         self.bn1 = nn.BatchNorm3d(filters_in)
         self.conv2 = nn.Conv3d(filters_in, filters_out, kernel_size=(3, 3, 3), padding=1)
         self.bn2 = nn.BatchNorm3d(filters_out)
-        self.conv3 = nn.Conv3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1)
+        self.conv3 = nn.Conv3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=stride, padding=1)
         self.bn3 = nn.BatchNorm3d(filters_out)
         self.act = act
         if self.act:
@@ -44,99 +43,18 @@ class ResBlockDown(nn.Module):
         conv_out = act2_out + act3_out
 
         return conv_out
-"""
-def resblock_down(inputs, filters_in, filters_out, scope_name, reuse, phase_train, act=True):
-    conv1 = nn.Conv3d(filters_in, filters_in, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1)
-    bn1 = nn.BatchNorm3d(filters_in)
-    conv2 = nn.Conv3d(filters_in, filters_out, kernel_size=(3, 3, 3), padding=1)
-    bn2 = nn.BatchNorm3d(filters_out)
-    conv3 = nn.Conv3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1)
-    bn3 = nn.BatchNorm3d(filters_out)
 
-    if act:
-        activation = nn.LeakyReLU(0.2)
-    else:
-        activation = nn.Identity()
 
-    for layer in [conv1, conv2, conv3]:
-        if isinstance(layer, nn.Conv3d):
-            nn.init.normal_(layer.weight, mean=0.0, std=0.02)
-            nn.init.zeros_(layer.bias)
-        elif isinstance(layer, nn.BatchNorm3d):
-            nn.init.normal_(layer, mean=1.0, std=0.02)
-            nn.init.zeros_(layer)
-            #layer.running_mean.zero_()
-            #layer.running_var.fill_(1.0)
-            #layer.momentum = 1.0
 
-    conv1_out = conv1(inputs)
-    bn1_out = bn1(conv1_out)
-    act1_out = activation(bn1_out)
-
-    conv2_out = conv2(act1_out)
-    bn2_out = bn2(conv2_out)
-    act2_out = activation(bn2_out)
-
-    conv3_out = conv3(inputs)
-    bn3_out = bn3(conv3_out)
-    act3_out = activation(bn3_out)
-
-    conv_out = act2_out + act3_out
-
-    return conv_out
-"""
-
-"""
-def ResBlockUp(filters_in, filters_out, act=True):
-    conv1 = nn.ConvTranspose3d(filters_in, filters_in, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1)
-    bn1 = nn.BatchNorm3d(filters_in)
-    conv2 = nn.ConvTranspose3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=1)
-    bn2 = nn.BatchNorm3d(filters_out)
-    conv3 = nn.ConvTranspose3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1)
-    bn3 = nn.BatchNorm3d(filters_out)
-
-    if act:
-        activation = nn.LeakyReLU(0.2)
-    else:
-        activation = nn.Identity()
-
-    for layer in [conv1, conv2, conv3]:
-        if isinstance(layer, nn.ConvTranspose3d):
-            nn.init.normal_(layer.weight, mean=0.0, std=0.02)
-            nn.init.zeros_(layer.bias)
-        elif isinstance(layer, nn.BatchNorm3d):
-            nn.init.normal_(layer.weight, mean=1.0, std=0.02)
-            nn.init.zeros_(layer.bias)
-            #layer.running_mean.zero_()
-            #layer.running_var.fill_(1.0)
-            #layer.momentum = 1.0
-
-    conv1_out = conv1(inputs)
-    bn1_out = bn1(conv1_out)
-    act1_out = activation(bn1_out)
-
-    conv2_out = conv2(act1_out)
-    bn2_out = bn2(conv2_out)
-    act2_out = activation(bn2_out)
-
-    conv3_out = conv3(inputs)
-    bn3_out = bn3(conv3_out)
-    act3_out = activation(bn3_out)
-
-    conv_out = act2_out + act3_out
-
-    return conv_out
-
-"""
 class ResBlockUp(nn.Module):
-    def __init__(self, filters_in, filters_out, act=True):
+    def __init__(self, filters_in, filters_out, act=True, stride =(2,2,2), output_padding = (1,1,1)):
         super(ResBlockUp, self).__init__()
 
-        self.conv1 = nn.ConvTranspose3d(filters_in, filters_in, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1, output_padding=1)
+        self.conv1 = nn.ConvTranspose3d(filters_in, filters_in, kernel_size=(3, 3, 3), stride=stride, padding=1, output_padding=output_padding)
         self.bn1 = nn.BatchNorm3d(filters_in)
         self.conv2 = nn.ConvTranspose3d(filters_in, filters_out, kernel_size=(3, 3, 3), padding=1)
         self.bn2 = nn.BatchNorm3d(filters_out)
-        self.conv3 = nn.ConvTranspose3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=1, output_padding=1)
+        self.conv3 = nn.ConvTranspose3d(filters_in, filters_out, kernel_size=(3, 3, 3), stride=stride, padding=1, output_padding=output_padding)
         self.bn3 = nn.BatchNorm3d(filters_out)
 
         if act:
@@ -185,10 +103,10 @@ class Encoder(nn.Module):
         self.relu1 = nn.LeakyReLU(0.2)
 
         # Res-Blocks
-        self.res1 = ResBlockDown(gf_dim, gf_dim)
-        self.res2 = ResBlockDown(gf_dim, gf_dim * 2)
-        self.res3 = ResBlockDown(gf_dim * 2, gf_dim * 4)
-        self.res4 = ResBlockDown(gf_dim * 4, gf_dim * 8)
+        self.res1 = ResBlockDown(gf_dim, gf_dim, stride=(2,2,2))
+        self.res2 = ResBlockDown(gf_dim, gf_dim * 2, stride=(2,2,2))
+        self.res3 = ResBlockDown(gf_dim * 2, gf_dim * 4, stride=(2,2,2))
+        self.res4 = ResBlockDown(gf_dim * 4, gf_dim * 8, stride=(2,2,1))
 
         # Latent Convolution layers
         self.conv_latent = nn.Conv3d(gf_dim * 8, gf_dim * 32, kernel_size=(1, 1, 1), padding=0)
@@ -265,51 +183,7 @@ class Encoder(nn.Module):
         """
 
         return conv_latent, conv_latent_std, conv5
-"""
-class Decoder(nn.Module):
-    def __init__(self, gf_dim):
-        super(Decoder, self).__init__()
 
-        # Dimension of gen filters in first conv layer. [64]
-        self.gf_dim = gf_dim
-
-        # Initialization
-        w_init = nn.init.normal_
-        b_init = nn.init.constant_
-        gamma_init = nn.init.ones_
-
-        # Res-Blocks (for effective deep architecture)
-        self.resp1 = ResBlockUp(32, gf_dim * 16)
-        self.res0 = ResBlockUp(16, gf_dim * 8)
-        self.res1 = ResBlockUp(8, gf_dim * 4)
-        self.res2 = ResBlockUp(4, gf_dim * 2)
-
-        # 1st convolution block: convolution, followed by batch normalization and activation
-        self.conv1 = nn.Conv3d(gf_dim * 2, gf_dim, kernel_size=(3, 3, 3), stride=(1, 1, 1), padding=(1, 1, 1))
-        self.bn1 = nn.BatchNorm3d(gf_dim)
-
-        # 2nd convolution block: convolution
-        self.conv2 = nn.Conv3d(gf_dim, 4, kernel_size=(3, 3, 3), padding=(1, 1, 1))
-
-        # Initialization
-        w_init(self.conv1.weight)
-        b_init(self.conv1.bias)
-        gamma_init(self.bn1.weight)
-
-    def forward(self, z):
-        resp1 = self.resp1(z)
-        res0 = self.res0(resp1)
-        res1 = self.res1(res0)
-        res2 = self.res2(res1)
-
-        conv1 = self.conv1(res2)
-        conv1 = self.bn1(conv1)
-        conv1 = nn.functional.leaky_relu(conv1, negative_slope=0.2)
-
-        conv2 = self.conv2(conv1)
-
-        return conv2
-"""
 
 class Decoder(nn.Module):
     def __init__(self, gf_dim=8):
@@ -323,10 +197,10 @@ class Decoder(nn.Module):
         gamma_init = nn.init.ones_
 
         # Res-Blocks (for effective deep architecture)
-        self.resp1 = ResBlockUp(gf_dim * 32, gf_dim * 16)
-        self.res0 = ResBlockUp(gf_dim * 16, gf_dim * 8)
-        self.res1 = ResBlockUp(gf_dim * 8, gf_dim * 4)
-        self.res2 = ResBlockUp(gf_dim * 4, gf_dim * 2)
+        self.resp1 = ResBlockUp(gf_dim * 32, gf_dim * 16, stride=(2,2,1), output_padding = (1,1,0))
+        self.res0 = ResBlockUp(gf_dim * 16, gf_dim * 8, stride=(2,2,2), output_padding = (1,1,1))
+        self.res1 = ResBlockUp(gf_dim * 8, gf_dim * 4, stride=(2,2,2), output_padding = (1,1,1))
+        self.res2 = ResBlockUp(gf_dim * 4, gf_dim * 2, stride=(2,2,2), output_padding = (1,1,1))
 
         # 1st convolution block: convolution, followed by batch normalization and activation
         self.conv1 = nn.Conv3d(gf_dim * 2, gf_dim, kernel_size=3, stride=1, padding=1)
