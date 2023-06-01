@@ -5,6 +5,7 @@ import os
 from tqdm import tqdm
 import wandb
 import matplotlib
+from matplotlib import pyplot as plt
 
 
 # =================================================================================
@@ -35,18 +36,18 @@ def evaluate(model,epoch, images_vl, best_val_loss, log_dir,config, device, val_
             # Forward pass
             ouput_images, z_mean, z_std, res = model(input_images.float())
             # Visualization
-            if nv%50 == 0:
+            if nv%100 == 0:
                 visualize(epoch, input_images, ouput_images, val_table_watch)
                 save_inputs_outputs(nv, epoch, input_images, ouput_images, config)
             # Compute the loss
             gen_loss, res_loss, lat_loss = compute_losses(input_images, ouput_images, z_mean, z_std, res)
             gen_factor_loss = config['gen_loss_factor']*gen_loss
             loss = torch.mean(gen_factor_loss + lat_loss)
-            val_gen_losses += gen_loss.mean()
-            val_gen_factor_losses += gen_factor_loss.mean()
-            val_res_losses += res_loss.mean()
-            val_lat_losses += lat_loss.mean()
-            val_losses += loss
+            val_gen_losses += gen_loss.mean().item()
+            val_gen_factor_losses += gen_factor_loss.mean().item()
+            val_res_losses += res_loss.mean().item()
+            val_lat_losses += lat_loss.mean().item()
+            val_losses += loss.item()
             number_of_batches += 1
 
     if val_losses < best_val_loss:
@@ -58,8 +59,8 @@ def evaluate(model,epoch, images_vl, best_val_loss, log_dir,config, device, val_
     
 
     # Logging the validation losses
-    logging.info('Epoch: {}, val_gen_losses: {:.3f}, val_gen_factor_losses: {:.3f}, val_lat_losses: {:.3f}, val_res_losses: {:.3f}, val_losses: {:.3f}'.format(epoch, val_gen_losses/number_of_batches, val_gen_factor_losses/number_of_batches,val_lat_losses/number_of_batches, val_res_losses/number_of_batches, val_losses/number_of_batches))
-    wandb.log({'val_gen_losses': torch.round(val_gen_losses/number_of_batches, decimals = 3), 'val_gen_factor_losses': torch.round(val_gen_factor_losses/number_of_batches, decimals=3), 'val_lat_losses': torch.round(val_lat_losses/number_of_batches, decimals = 3), 'val_res_losses': torch.round(val_res_losses/number_of_batches, decimals = 3), 'val_losses': torch.round(val_losses/number_of_batches, decimals = 3), 'best_val_loss': best_val_loss/number_of_batches})
+    logging.info('Epoch: {}, val_gen_losses: {:.5f}, val_gen_factor_losses: {:.5f}, val_lat_losses: {:.5f}, val_res_losses: {:.5f}, val_losses: {:.5f}'.format(epoch, val_gen_losses/number_of_batches, val_gen_factor_losses/number_of_batches,val_lat_losses/number_of_batches, val_res_losses/number_of_batches, val_losses/number_of_batches))
+    wandb.log({'val_gen_losses': round(val_gen_losses/number_of_batches, 5), 'val_gen_factor_losses': round(val_gen_factor_losses/number_of_batches, 5) , 'val_lat_losses': round(val_lat_losses/number_of_batches, 5), 'val_res_losses': round(val_res_losses/number_of_batches, 5), 'val_losses': round(val_losses/number_of_batches, 5), 'best_val_loss': best_val_loss/number_of_batches})
     
     # Set the model back to train mode
     model.train()
@@ -115,12 +116,13 @@ def train(model: torch.nn.Module,
 
             # Transfer the input_images to "device"
             input_images = torch.from_numpy(input_images).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+            
             # Reset the gradients
             optimizer.zero_grad()
             # Forward pass
             ouput_images, z_mean, z_std, res = model(input_images.float())
             # Visualization
-            if nt%50 == 0:
+            if nt%500 == 0:
                 visualize(epoch, input_images, ouput_images, tr_table_watch)
                 save_inputs_outputs(nt, epoch, input_images, ouput_images, config)
             # Compute the loss
@@ -132,19 +134,18 @@ def train(model: torch.nn.Module,
             # Update the weights
             optimizer.step()
             # Compute the loss
-            gen_losses += gen_loss.mean()
-            gen_factor_losses += gen_factor_loss.mean()
-            res_losses += res_loss.mean()
-            lat_losses += lat_loss.mean()
-            losses += loss
+            gen_losses += gen_loss.mean().item()
+            gen_factor_losses += gen_factor_loss.mean().item()
+            res_losses += res_loss.mean().item()
+            lat_losses += lat_loss.mean().item()
+            losses += loss.item()
             number_of_batches += 1
-            
+                        
+        if epoch%20 == 0:
 
-        if epoch%10 == 0:
-            
-            logging.info('Epoch: {}, train_gen_loss: {:.3f}, train_gen_factor_loss: {:.3f},train_lat_loss: {:.3f}, train_res_loss: {:.3f}, train_loss: {:.3f}'.format(epoch, gen_losses/number_of_batches,gen_factor_losses/number_of_batches, lat_losses/number_of_batches, res_losses/number_of_batches, losses/number_of_batches))
+            logging.info('Epoch: {}, train_gen_loss: {:.5f}, train_gen_factor_loss: {:.5f},train_lat_loss: {:.5f}, train_res_loss: {:.5f}, train_loss: {:.5f}'.format(epoch, gen_losses/number_of_batches,gen_factor_losses/number_of_batches, lat_losses/number_of_batches, res_losses/number_of_batches, losses/number_of_batches))
 
-            wandb.log({'train_gen_loss': torch.round(gen_losses/number_of_batches, decimals = 3),'train_gen_factor_loss': torch.round(gen_factor_losses/number_of_batches, decimals = 3), 'train_lat_loss': torch.round(lat_losses/number_of_batches, decimals = 3), 'train_res_loss': torch.round(res_losses/number_of_batches, decimals = 3), 'train_loss': torch.round(losses/number_of_batches, decimals = 3)})
+            wandb.log({'train_gen_loss': round(gen_losses/number_of_batches, 5),'train_gen_factor_loss': round(gen_factor_losses/number_of_batches, 5), 'train_lat_loss': round(lat_losses/number_of_batches, 5), 'train_res_loss': round(res_losses/number_of_batches, 5), 'train_loss': round(losses/number_of_batches, 5)})
             # Save the model
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-{epoch}"))
 
@@ -152,6 +153,8 @@ def train(model: torch.nn.Module,
         if epoch%config['validation_frequency'] == 0:
             evaluate(model, epoch, images_vl, best_val_loss, log_dir, config, device, val_table_watch)
             # TODO: implement visualization of the latent space ? 
+
+        torch.cuda.empty_cache()
             
     wandb.log({"val_table": val_table_watch})
     wandb.log({"tr_table": tr_table_watch})
@@ -161,8 +164,8 @@ def checkpoint(model, filename):
     torch.save(model.state_dict(), filename)
 
 
-def load_model(model, checkpoint_path, epoch, config):
-    model.load_state_dict(torch.load(checkpoint_path+'/{}.ckpt-{}'.format(config['model_name'], epoch)))
+def load_model(model, checkpoint_path, config):
+    model.load_state_dict(torch.load(checkpoint_path+'/{}.ckpt-{}'.format(config['model_name'], config['latest_model_epoch'])))
     return model
 
 def visualize(epoch, input_images, ouput_images, table_watch):
@@ -170,21 +173,58 @@ def visualize(epoch, input_images, ouput_images, table_watch):
     output_cpu = ouput_images.cpu().detach().numpy()
 
     # Map the colors to have the same scale
-    input_cmap = cmapper_gray(input_cpu)
-    output_cmap = cmapper_gray(output_cpu)
     input_cmap =input_cpu
     output_cmap =output_cpu
     # Plot random images in wandb table
     for i in range(2):
         random_index = np.random.randint(0, input_cpu.shape[0])
         random_time = np.random.randint(0, input_cpu.shape[4])
-        table_watch.add_data(epoch, wandb.Image(input_cmap[random_index, 0, :,:, random_time]), wandb.Image(output_cmap[random_index, 0, :,:, random_time]))
-        table_watch.add_data(epoch, wandb.Image(input_cmap[random_index, 1, :,:, random_time]), wandb.Image(output_cmap[random_index, 1, :,:, random_time]))
-        table_watch.add_data(epoch, wandb.Image(input_cmap[random_index, 2, :,:, random_time]), wandb.Image(output_cmap[random_index, 2, :,:, random_time]))
+        # Manually add a colorbar using Matplotlib
+        fig0, ax = plt.subplots()
+        im = ax.imshow(input_cmap[random_index, 0, :,:, random_time])
+        cbar = fig0.colorbar(im)
+        
+        out_fig0, ax = plt.subplots()
+        im = ax.imshow(output_cmap[random_index, 0, :,:, random_time])
+        cbar = out_fig0.colorbar(im)
+        table_watch.add_data(epoch, wandb.Image(fig0), wandb.Image(out_fig0))
+        plt.close(fig0)
+        plt.close(out_fig0)
+        fig1, ax = plt.subplots()
+        im = ax.imshow(input_cmap[random_index, 1, :,:, random_time])
+        cbar = fig1.colorbar(im)
+        out_fig1, ax = plt.subplots()
+        im = ax.imshow(output_cmap[random_index, 1, :,:, random_time])
+        cbar = out_fig1.colorbar(im)
+        table_watch.add_data(epoch, wandb.Image(fig1), wandb.Image(out_fig1))
+        plt.close(fig1)
+        plt.close(out_fig1)
 
+        fig2, ax = plt.subplots()
+        im = ax.imshow(input_cmap[random_index, 2, :,:, random_time])
+        cbar = fig2.colorbar(im)
+        out_fig2, ax = plt.subplots()
+        im = ax.imshow(output_cmap[random_index, 2, :,:, random_time])
+        cbar = out_fig2.colorbar(im)
+        table_watch.add_data(epoch, wandb.Image(fig2), wandb.Image(out_fig2))
+        plt.close(fig2)
+        plt.close(out_fig2)
+
+
+        # Log the figure with the colorbar using wandb.Image
+        #wandb.log({"Input Image": wandb.Image(fig0, caption="Intensity channel"), "Output Image": wandb.Image(out_fig0, caption="Intensity channel"), "Input Image": wandb.Image(fig1, caption="vx channel"), "Output Image": wandb.Image(out_fig1, caption="vx channel")})
         
+
+        #table_watch.add_data(epoch, wandb.Image(input_cmap[random_index, 0, :,:, random_time]), wandb.Image(output_cmap[random_index, 0, :,:, random_time]))
         
-        
+        #table_watch.add_data(epoch, wandb.Image(input_cmap[random_index, 1, :,:, random_time]), wandb.Image(output_cmap[random_index, 1, :,:, random_time]))
+  
+        #table_watch.add_data(epoch, wandb.Image(input_cmap[random_index, 2, :,:, random_time]), wandb.Image(output_cmap[random_index, 2, :,:, random_time]))
+  
+  
+
+
+    
 
 def save_inputs_outputs(n_image, epoch, input_, ouput_, config):
     path_inter_inputs = os.path.join(config['exp_path'], 'intermediate_results/inputs')
