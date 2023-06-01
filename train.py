@@ -20,7 +20,7 @@ import wandb
 
 from helpers import data_bern_numpy_to_preprocessed_hdf5
 from helpers import data_bern_numpy_to_hdf5
-from helpers.utils import make_dir_safely
+from helpers.utils import make_dir_safely, verify_leakage
 from helpers.run import train, load_model, evaluate
 from helpers.data_loader import load_data
 
@@ -44,7 +44,7 @@ if __name__ ==  "__main__":
     parser.add_argument('--model_name', type=str, default='0', help='Name of the model.')
     parser.add_argument('--config_path', type=str, required= True, help='Path to the config file.')
     parser.add_argument('--checkpoint', type=str, default="logs", help='Path to the checkpoint file to restore.')
-    parser.add_argument('--continue_training', type=bool, default=False, help='Continue training from checkpoint.')
+    parser.add_argument('--continue_training', type=bool, help='Continue training from checkpoint.')
     #parser.add_argument('--train', type=str)
     #parser.add_argument('--val', type=str)
     parser.add_argument('--preprocess_method', type=str)
@@ -77,7 +77,7 @@ if __name__ ==  "__main__":
         # Costume name given
         pass
     else:
-        config['model_name'] =  f"{timestamp}_{config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-zdim{config['z_dim']}-da{config['do_data_augmentation']}"
+        config['model_name'] =  f"{timestamp}_{config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-zdim{config['z_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}"
     
     wandb_mode = "online" # online/ disabled
 
@@ -107,8 +107,12 @@ if __name__ ==  "__main__":
         # ================================================
         # ======= DATA CONFIGURATION LOADING =====================
         # ================================================
+
+        # Check if there is data leakage (some people in both train and test)
+        verify_leakage()
+
         # Load the data
-        images_tr, images_vl = load_data(config, config_sys, idx_start_tr=0, idx_end_tr=5, idx_start_vl=5, idx_end_vl=8)
+        images_tr, images_vl = load_data(config, config_sys, idx_start_tr=0, idx_end_tr=35, idx_start_vl=35, idx_end_vl=42)
         
         # ================================================
         # Initialize the model, training parameters, model name and logging
@@ -116,12 +120,12 @@ if __name__ ==  "__main__":
         if config['model'] == 'vae':
             model = VAE(z_dim=config['z_dim'], in_channels=4, gf_dim=8).to(device)
         else:
-            raise ValueError(f"Unknown model: {model}")
+            raise ValueError(f"Unknown model: {config['model']}")
         
         
         if config['continue_training']:
             continue_train_path = os.path.join(project_code_root, config["model_directory"])
-            model = load_model(model, continue_train_path, config["latest_model_epoch"])
+            model = load_model(model, continue_train_path, config)
             already_completed_epochs = config['latest_model_epoch']
         else:
             already_completed_epochs = 0
