@@ -286,7 +286,7 @@ class VAE(nn.Module):
         samples = torch.randn_like(z_mean)
         self.guessed_z = z_mean + z_std * samples
 
-        # Decode
+        # Decoder
         decoder_output = self.decoder(self.guessed_z)
 
         return decoder_output, z_mean, z_std, res
