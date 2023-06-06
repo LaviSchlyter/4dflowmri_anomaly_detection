@@ -112,7 +112,7 @@ if __name__ ==  "__main__":
         verify_leakage()
 
         # Load the data
-        images_tr, images_vl = load_data(config, config_sys, idx_start_tr=0, idx_end_tr=35, idx_start_vl=35, idx_end_vl=42)
+        images_tr, images_vl, _ = load_data(config, config_sys, idx_start_tr=0, idx_end_tr=35, idx_start_vl=35, idx_end_vl=42)
         
         # ================================================
         # Initialize the model, training parameters, model name and logging
@@ -125,12 +125,12 @@ if __name__ ==  "__main__":
         
         if config['continue_training']:
             continue_train_path = os.path.join(project_code_root, config["model_directory"])
-            model = load_model(model, continue_train_path, config)
+            model = load_model(model, continue_train_path, config, device=device)
             already_completed_epochs = config['latest_model_epoch']
         else:
             already_completed_epochs = 0
 
         # Train 
-        optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'])
+        optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'], betas=(config['beta1'], config['beta2']))
         train(model, images_tr, images_vl, log_dir, already_completed_epochs, config, device, optimizer)
 
