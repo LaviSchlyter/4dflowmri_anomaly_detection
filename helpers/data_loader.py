@@ -9,7 +9,7 @@ import numpy as np
 # ==================================================================
 # Load the data
 # ==================================================================
-def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8):
+def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8, idx_start_ts = 0, idx_end_ts = 2):
     
     if config['preprocess_method'] == 'none':
 
@@ -44,6 +44,15 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
             logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
             logging.info('Shape of validation labels: %s' %str(labels_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t]
 
+            data_ts = data_bern_numpy_to_hdf5.load_data(basepath=config_sys.project_data_root,
+                                                        idx_start=idx_start_ts,
+                                                        idx_end=idx_end_ts,
+                                                        train_test='test',
+                                                        )
+            
+            images_ts = data_ts['images_test']
+            labels_ts = data_ts['labels_test']
+
     # ================================================
     # === If mask preprocessing is selected ==========
     # ================================================
@@ -74,6 +83,15 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
         images_vl = data_vl['masked_images_val']
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('=============================================================================')
+
+        data_ts = data_bern_numpy_to_preprocessed_hdf5.load_masked_data(basepath=config_sys.project_data_root,
+                                                                        idx_start=idx_start_ts,
+                                                                        idx_end=idx_end_ts,
+                                                                        train_test='test',
+                                                                        )
+        
+        images_ts = data_ts['masked_images_test']
+        
     
     # ================================================
     # === If slicing preprocessing is selected ==========
@@ -106,6 +124,15 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
         images_vl = data_vl['sliced_images_val']
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('=============================================================================')
+
+        data_ts = data_bern_numpy_to_preprocessed_hdf5.load_cropped_data_sliced(basepath=config_sys.project_data_root,
+                                                                                idx_start=idx_start_ts,
+                                                                                idx_end=idx_end_ts,
+                                                                                train_test='test',
+                                                                                )
+        
+        images_ts = data_ts['sliced_images_test']
+
 
     # ================================================
     # ==== If masked slicing preprocessing is selected
@@ -140,6 +167,14 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('=============================================================================')
 
+        data_ts = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath=config_sys.project_data_root,
+                                                                                idx_start=idx_start_ts,
+                                                                                idx_end=idx_end_ts,
+                                                                                train_test='test',
+                                                                                )
+        
+        images_ts = data_ts['sliced_images_test']
+
     
     # ================================================
     # ==== if sliced full aorta preprocessing is selected
@@ -172,6 +207,14 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
         images_vl = data_vl['sliced_images_val']
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('=============================================================================')
+
+        data_ts = data_bern_numpy_to_preprocessed_hdf5.load_cropped_data_sliced_full_aorta(basepath=config_sys.project_data_root,
+                                                                                            idx_start=idx_start_ts,
+                                                                                            idx_end=idx_end_ts,
+                                                                                            train_test='test',
+                                                                                            )
+        
+        images_ts = data_ts['sliced_images_test']
 
     # ================================================
     # ==== if masked sliced full aorta preprocessing is selected
@@ -206,6 +249,15 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('=============================================================================')
 
+        data_ts = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced_full_aorta(basepath=config_sys.project_data_root,
+                                                                                            idx_start=idx_start_ts,
+                                                                                            idx_end=idx_end_ts,
+                                                                                            train_test='test',
+                                                                                            )
+        
+        images_ts = data_ts['sliced_images_test']
+
+
     # ================================================
     # ==== if mock_square preprocessing is selected
     # ================================================
@@ -218,4 +270,4 @@ def load_data(config, config_sys, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
     else:
         raise ValueError(f"Preprocessing method {config['preprocess_method']} not implemented.")
     
-    return images_tr, images_vl
+    return images_tr, images_vl, images_ts
