@@ -52,6 +52,7 @@ def evaluate(model,epoch, images_vl, best_val_loss, log_dir,config, device, val_
 
     if val_losses < best_val_loss:
         logging.info('Saving best model at epoch {}'.format(epoch))
+        wandb.run.summary['best_val_epoch'] = epoch
         best_val_loss = val_losses
         checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-best"))
 
@@ -64,6 +65,7 @@ def evaluate(model,epoch, images_vl, best_val_loss, log_dir,config, device, val_
     
     # Set the model back to train mode
     model.train()
+    return best_val_loss
 
 
 # =================================================================================
@@ -141,7 +143,7 @@ def train(model: torch.nn.Module,
             losses += loss.item()
             number_of_batches += 1
                         
-        if epoch%20 == 0:
+        if epoch%10 == 0:
 
             logging.info('Epoch: {}, train_gen_loss: {:.5f}, train_gen_factor_loss: {:.5f},train_lat_loss: {:.5f}, train_res_loss: {:.5f}, train_loss: {:.5f}'.format(epoch, gen_losses/number_of_batches,gen_factor_losses/number_of_batches, lat_losses/number_of_batches, res_losses/number_of_batches, losses/number_of_batches))
 
@@ -151,7 +153,7 @@ def train(model: torch.nn.Module,
 
         # Evaluate the model on the validation set
         if epoch%config['validation_frequency'] == 0:
-            evaluate(model, epoch, images_vl, best_val_loss, log_dir, config, device, val_table_watch)
+            best_val_loss = evaluate(model, epoch, images_vl, best_val_loss, log_dir, config, device, val_table_watch)
             # TODO: implement visualization of the latent space ? 
 
         torch.cuda.empty_cache()
@@ -164,8 +166,8 @@ def checkpoint(model, filename):
     torch.save(model.state_dict(), filename)
 
 
-def load_model(model, checkpoint_path, config):
-    model.load_state_dict(torch.load(checkpoint_path+'/{}.ckpt-{}'.format(config['model_name'], config['latest_model_epoch'])))
+def load_model(model, checkpoint_path, config, device):
+    model.load_state_dict(torch.load(checkpoint_path+'/{}.ckpt-{}'.format(config['model_name'], config['latest_model_epoch']), map_location=device))
     return model
 
 def visualize(epoch, input_images, ouput_images, table_watch):
