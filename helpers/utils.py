@@ -1,11 +1,25 @@
 import os 
 import numpy as np
 from scipy.ndimage import gaussian_filter
-from loss_functions import l2loss, kl_loss_1d
+
+from scipy.special import eval_genlaguerre as L 
 import torch
 import sys
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
 import config.system as sys_config
+from helpers.loss_functions import l2loss, kl_loss_1d, kl_loss_tilted, compute_mmd
+# For the patch blending we import from another directory
+sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/git_repos/many-tasks-make-light-work')
+from multitask_method.tasks.patch_blending_task import \
+    TestPoissonImageEditingMixedGradBlender, TestPoissonImageEditingSourceGradBlender, TestPatchInterpolationBlender
+
+# TODO Remove (since you may probably ened up with the poissons ones )
+from multitask_method.tasks.cutout_task import Cutout
+from multitask_method.tasks.patch_blending_task import TestCutPastePatchBlender
+from multitask_method.tasks.labelling import FlippedGaussianLabeller
+
+
+labeller = FlippedGaussianLabeller(0.2)
 
 
 # ==================================================================
@@ -21,8 +35,57 @@ def verify_leakage():
     if overlap:
         raise ValueError('There is leakage between train_val and test')
 
+# ==================================================================
+# ==================================================================
+# Apply Poisson Image Blending on the fly
+# ==================================================================
+# ==================================================================
+
+def apply_blending(input_images, images_for_blend, mask_blending):
+    # Put channels is second dimension
+    input_images = np.transpose(input_images, (0,4,1,2,3))
+    images_for_blend = np.transpose(images_for_blend, (0,4,1,2,3))
+    # Inputs are all numpy arrays TODO: make sure they are (type hinting)
+    # Accumlate the blended images and the anomaly masks
+    #blended_images = np.empty(input_images.shape)
+    blended_images = []
+    # The anomaly masks will not have  channel dimension
+    #anomaly_masks = np.empty((input_images.shape[0],input_images.shape[2], input_images.shape[3], input_images.shape[4]))
+    anomaly_masks = []
 
 
+    for input_, blender in zip(input_images, images_for_blend):
+        # Random flip 
+        if np.random.rand() > 0.5:
+            # Apply Poisson blending with mixing
+            blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
+            #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
+            #blending_function = Cutout(labeller)
+            blended_image, anomaly_mask = blending_function(input_, mask_blending)
+            # output shape of blended image c,x,y,t
+            # ouput shape of anomaly mask x,y,t
+
+        else:
+            # Apply Poisson blending with source
+            blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
+            #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
+            #blending_function = Cutout(labeller)
+            blended_image, anomaly_mask = blending_function(input_, mask_blending)
+            
+            
+            
+            
+        # Expand dims to add batch dimension
+        blended_image = np.expand_dims(blended_image, axis=0)
+        anomaly_mask = np.expand_dims(anomaly_mask, axis=0)
+        blended_images.append(blended_image)
+        anomaly_masks.append(anomaly_mask)
+    blended_images = np.concatenate(blended_images, axis = 0)    
+    anomaly_masks = np.concatenate(anomaly_masks, axis = 0)
+    # Put channels back in last dimension
+    blended_images = np.transpose(blended_images, (0,2,3,4,1))
+    #anomaly_masks = np.transpose(anomaly_masks, (0,2,3,1))
+    return blended_images, anomaly_masks
 
 # ==================================================================
 # ==================================================================
@@ -30,22 +93,110 @@ def verify_leakage():
 # ==================================================================
 # ==================================================================
 
-def compute_losses(input_images, output_images, z_mean, z_std, res):
+def compute_losses_VAE(input_images, output_dict, config):
     """
     Computes the losses for the output images, the latent space and the residual
     """
     # Compute the reconstruction loss
-    gen_loss = l2loss(input_images, output_images)
+    gen_loss = l2loss(input_images, output_dict['decoder_output'])
 
     # Compute the residual loss
-    true_res = torch.abs(input_images - output_images)
-    res_loss = l2loss(true_res, res)
+    true_res = torch.abs(input_images - output_dict['decoder_output'])
+    res_loss = l2loss(true_res, output_dict['res'])
 
     # Compute the latent loss
-    lat_loss = kl_loss_1d(z_mean, z_std)    
-    
-    return gen_loss, res_loss, lat_loss
+    lat_loss = kl_loss_1d(output_dict['mu'], output_dict['z_std'])   
+    gen_factor_loss = config['gen_loss_factor']*gen_loss
 
+    # Total loss
+    loss = torch.mean(gen_factor_loss + lat_loss) 
+
+    # Val loss
+    val_loss = torch.mean(gen_loss + lat_loss)
+
+    # Save the losses in a dictionary
+    dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss,'gen_loss': gen_loss, 'res_loss': res_loss, 'lat_loss': lat_loss}
+    return dict_loss
+
+
+def compute_losses_TVAE(input_images, output_dict, config):
+    
+    # Compute the reconstruction loss
+    gen_loss = l2loss(input_images, output_dict['decoder_output'])
+
+    # Compute the kld loss
+    kld_loss = kl_loss_tilted(output_dict['mu'], config['mu_star'])
+
+    # Factor loss
+    gen_factor_loss = config['gen_loss_factor']*gen_loss
+
+    # Total loss
+    loss = torch.mean(gen_factor_loss + kld_loss)
+
+    # Val loss
+    val_loss = torch.mean(gen_loss + kld_loss)
+
+    # Save the losses in a dictionary
+    dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss,'gen_loss': gen_loss, 'kld_loss': kld_loss}
+    return dict_loss
+
+def compute_losses_MMDVAE(input_images, output_dict, config, device, samples_to_generate=100):
+
+    # Compute the reconstruction loss
+    gen_loss = l2loss(input_images, output_dict['decoder_output'])
+
+    # Compute the MMD regularization loss
+    # Generate random samples following normal distribution
+    true_samples = torch.randn(samples_to_generate, 32*config['gf_dim'],2,2,3, device = device)
+    mmd_loss = compute_mmd(output_dict['z'], true_samples)
+
+    # Factor loss
+    gen_factor_loss = config['gen_loss_factor']*gen_loss
+
+    mmd_factor_loss = config['mmd_loss_factor']*mmd_loss
+
+    # Total loss
+    loss = torch.mean(gen_factor_loss + mmd_factor_loss)
+
+    # Val loss
+    val_loss = torch.mean(gen_loss + mmd_loss)
+
+    # Save the losses in a dictionary
+    dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss, 'mmd_factor_loss': mmd_factor_loss, 'gen_loss': gen_loss, 'mmd_loss': mmd_loss}
+    return dict_loss
+    
+
+
+
+
+
+# ==================================================================
+# ==================================================================
+
+
+# TVAE
+def kld(mu, tau, d):
+    # no need to include z, since we run gradient descent...
+    return -tau*np.sqrt(np.pi/2)*L(1/2, d/2 -1, -(mu**2)/2) + (mu**2)/2
+
+# convex optimization problem
+def kld_min(tau, d):
+    steps = [1e-1, 1e-2, 1e-3, 1e-4]
+    dx = 5e-3
+
+    # inital guess (very close to optimal value)
+    x = np.sqrt(max(tau**2 - d, 0))
+
+    # run gradient descent (kld is convex)
+    for step in steps:
+        for i in range(1000): # TODO update this to 10000
+            y1 = kld(x-dx/2, tau, d)
+            y2 = kld(x+dx/2, tau, d)
+
+            grad = (y2-y1)/dx
+            x -= grad*step
+
+    return x
 # ==========================================        
 # function to normalize the input arrays (intensity and velocity) to a range between 0 to 1.
 # magnitude normalization is a simple division by the largest value.
