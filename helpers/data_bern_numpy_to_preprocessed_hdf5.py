@@ -623,6 +623,10 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # write each subject's image and label data in the hdf5 file
     # ==========================================
     dataset['sliced_images_%s' % train_test] = hdf5_file.create_dataset("sliced_images_%s" % train_test, images_dataset_shape, dtype='float32')
+
+    # If test then add label depending on if anomalous or not, 1 or 0
+    if train_test == 'test':
+        dataset['labels_%s' % train_test] = hdf5_file.create_dataset("labels_%s" % train_test, (end_shape[2]*num_images_to_load,), dtype='uint8')
     
     cnn_predictions = True
     i = 0
@@ -643,9 +647,11 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
             try:
                 # With patients
                 image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+                label = np.ones(end_shape[2])
             except:
                 # With controls
                 image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
+                label = np.zeros(end_shape[2])
         segmented_original = np.load(os.path.join(seg_path, patient))
         
 
@@ -737,6 +743,10 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 
         # add the image to the hdf5 file
         dataset['sliced_images_%s' % train_test][i*end_shape[2]:(i+1)*end_shape[2], :, :, :, :] = image_out
+        # If test then add label depending on if anomalous or not, 1 or 0
+        if train_test == 'test':
+            dataset['labels_%s' % train_test][i*end_shape[2]:(i+1)*end_shape[2]] = label
+            
 
         # increment the index being used to write in the hdf5 datasets
         i = i + 1
@@ -1240,26 +1250,26 @@ if __name__ == '__main__':
     # Make sure that any patient from the training/validation set is not in the test set
     verify_leakage()
 
-    masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=5, train_test='train')
-    masked_data_validation = load_masked_data(basepath, idx_start=5, idx_end=8, train_test='val')
-    masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=2, train_test='test')
+    masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
+    masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
+    #masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
     
 
-    sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=5, train_test='train')
-    sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=5, idx_end=8, train_test='val')
-    sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=2, train_test='test')
+    sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
+    sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')
+    #sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=20, train_test='test')
     
     masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
     masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')    
-    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=20, train_test='test')
+    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
 
-    sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=5, train_test='train')
-    sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=5, idx_end=8, train_test='val')
-    sliced_data_full_aorta_test = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=2, train_test='test')
+    sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
+    sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
+    #sliced_data_full_aorta_test = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
 
-    masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=5, train_test='train')
-    masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=5, idx_end=8, train_test='val')
-    masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=2, train_test='test')
+    masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
+    masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
+    #masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
 
     
     
