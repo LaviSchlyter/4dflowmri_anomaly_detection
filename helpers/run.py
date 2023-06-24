@@ -7,11 +7,13 @@ import wandb
 import matplotlib
 from matplotlib import pyplot as plt
 
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 # =================================================================================
 # ============== HELPER FUNCTIONS =============================================
 from batches import iterate_minibatches
 from utils import compute_losses_VAE, make_dir_safely, compute_losses_TVAE, compute_losses_MMDVAE \
-    , apply_poisson_blending
+    , apply_blending
 from metrics import compute_auc_roc_score, compute_average_precision_score
 from synthetic_anomalies import create_cube_mask
 
@@ -39,24 +41,26 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
     y = None
     # Loop over the batches
     # No data augmentation for validation set
-    for nv, batch in enumerate(iterate_minibatches(images_vl, config['batch_size'], data_augmentation=False, with_labels= config['use_synthetic_validation'], remove_indices= config['self_supervised'])):
+    for nv, batch in enumerate(iterate_minibatches(images_vl, config, data_augmentation=False, with_labels= config['use_synthetic_validation'], remove_indices= config['self_supervised'], indices_to_remove = config['indices_to_remove'])):
 
         with torch.no_grad():
-            if isinstance(batch, tuple):
+            if len(batch) == 3:
                 # We have the labels
-                input_images, y = batch  
+                input_images, y, batch_z_slice = batch  
                 y = torch.from_numpy(y).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+            elif len(batch) == 2:
+                input_images, batch_z_slice = batch
             else:
-                input_images = batch
+                raise ValueError('batch does not have the correct length, should be 2 or 3 and has length {}'.format(len(batch)))
 
             # Transfer the input_images to "device"
             input_images = torch.from_numpy(input_images).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
             # Forward pass
             output_dict = model(input_images.float())
             # Visualization
-            if nv%100 == 0:
+            if nv%50 == 0:
                 visualize(epoch, input_images, output_dict['decoder_output'], val_table_watch, labels=y)
-                save_inputs_outputs(nv, epoch, input_images, output_dict['decoder_output'], config,labels=y)
+                save_inputs_outputs(nv, epoch, input_images, output_dict['decoder_output'], config,labels=y, training= False)
             
             if config['use_synthetic_validation'] and not config['self_supervised']:
                 # Take the difference between input and output (for the unsupervised way)
@@ -109,8 +113,10 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
 
         if config['val_metric'] == 'auc_roc':
             current_score = auc_roc
+            best_val_name = 'best_val_auc_roc'
         elif config['val_metric'] == 'AP':
             current_score = ap
+            best_val_name = 'best_val_ap'
         else:
             raise ValueError('val_metric not recognized', config['val_metric'])
             
@@ -119,12 +125,14 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
             logging.info('Saving best model at epoch {}'.format(epoch))
             wandb.run.summary['best_val_epoch'] = epoch
             best_val_score = current_score
+            wandb.run.summary[best_val_name] = best_val_score
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-best"))
     else:
         if val_losses < best_val_score:
             logging.info('Saving best model at epoch {}'.format(epoch))
             wandb.run.summary['best_val_epoch'] = epoch
             best_val_score = val_losses
+            wandb.run.summary['best_validation'] = best_val_score
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-best"))
     if config['self_supervised']:
         # We don't have the same losses 
@@ -181,7 +189,13 @@ def train(model: torch.nn.Module,
     print(f"preprocess_method", config['preprocess_method'])
     print(f"use_synthetic_validation", config['use_synthetic_validation'])
     print(f"self_supervised", config['self_supervised'])
+    print(f"use_scheduler", config['use_scheduler'])
+    print(f'validation_metric_format', config['validation_metric_format'])
+    print(f'validation_metric', config['val_metric'])
+    print(f'List of indices of type of deformation to remove from validation since used in training: {config["indices_to_remove"]}')  
     
+    wandb.watch(model, log="all", log_freq=10)
+    #wandb.define_metric("best_validation", summary="max")
 
 
     if config['use_synthetic_validation']:
@@ -198,17 +212,25 @@ def train(model: torch.nn.Module,
         # Initiate wandb tables
         val_table_watch = wandb.Table(columns=["epoch", "input", "output", "mask"])
         tr_table_watch = wandb.Table(columns=["epoch", "input", "output", "mask"])
-        val_table = []
-        tr_table = []
     else:
         # Initiate wandb tables
         val_table_watch = wandb.Table(columns=["epoch", "input", "output"])
         tr_table_watch = wandb.Table(columns=["epoch", "input", "output"])
+
+    if config['use_scheduler']:
+        scheduler = CosineAnnealingLR(optimizer,
+                              T_max = config['epochs'] - already_completed_epochs, # Maximum number of iterations.
+                             eta_min = 5e-4) # Minimum learning rate.
+        logging.info('Scheduler:', str(scheduler.__class__.__name__))
+        
+    
         
     # Loop over the epochs
     for epoch in tqdm(range(already_completed_epochs, config['epochs'])):
-        print('========================= Epoch {} / {} ========================='.format(epoch + 1, config['epochs']))  
-
+        # Start at 1
+        epoch += 1
+        print('========================= Epoch {} / {} ========================='.format(epoch, config['epochs']))  
+        
 
         # Loop over the batches
         kld_losses = 0
@@ -224,25 +246,31 @@ def train(model: torch.nn.Module,
         y = None
         
 
-        for nt, batch in enumerate(iterate_minibatches(images_tr, config['batch_size'], data_augmentation=config['do_data_augmentation'])):
-            if isinstance(batch, tuple):
+        for nt, batch in enumerate(iterate_minibatches(images_tr, config, data_augmentation=config['do_data_augmentation'])):
+            if len(batch) == 3:
                 # We have the labels
-                input_images, y = batch  
+                input_images, y, batch_z_slice = batch  
                 #y = np.transpose(y, (0,4,1,2,3))
                 y = torch.from_numpy(y).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+            elif len(batch) == 2:
+                input_images,batch_z_slice = batch
             else:
-                input_images = batch
+                raise ValueError('batch does not have the correct length, should be 2 or 3 and has length {}'.format(len(batch)))
+                
+                
+
+            
 
 
-            # If self supervised, apply poisson blending
+            # If self supervised, apply blending - type is defined within function.
             if config['self_supervised']:
                 # Batch size
                 random_indices = np.arange(input_images.shape[0])
                 np.random.shuffle(random_indices)
                 sorted_indices = np.sort(random_indices)
                 images_for_blend =  images_tr[sorted_indices, ...]
-                # Apply poisson blending
-                input_images, anomaly_masks = apply_poisson_blending(input_images, images_for_blend, mask_blending)
+                # Apply blending
+                input_images, anomaly_masks = apply_blending(input_images, images_for_blend, mask_blending)
                 # Transfer the anomaly_masks to "device" and add channel dim
                 anomaly_masks = torch.from_numpy(anomaly_masks).to(device).unsqueeze(dim =1)
                 
@@ -297,9 +325,12 @@ def train(model: torch.nn.Module,
             # Compute the losses
             losses += dict_loss['loss'].item()
             number_of_batches += 1
+        if config['use_scheduler']:
+            wandb.log({ "lr": scheduler.get_last_lr()[0]})
+            scheduler.step()
             
                         
-        if epoch%(config['training_frequency']-1) == 0:
+        if epoch%(config['training_frequency']) == 0:
             # Check if self supervised
             if config['self_supervised']:
                 logging.info('Epoch: {}, train_loss: {:.5f}'.format(epoch, losses/number_of_batches))
@@ -322,11 +353,10 @@ def train(model: torch.nn.Module,
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-{epoch}"))
 
         # Evaluate the model on the validation set
-        if epoch%(config['validation_frequency']-1) == 0:
+        if epoch%(config['validation_frequency']) == 0:
             best_val_score = evaluate(model, epoch, images_vl, best_val_score, log_dir, config, device, val_table_watch)
+            
             # TODO: implement visualization of the latent space ? 
-            #wandb.log({"val_table": val_table_watch})
-            #wandb.log({"tr_table": tr_table_watch})
 
         torch.cuda.empty_cache()
             
@@ -342,7 +372,7 @@ def load_model(model, checkpoint_path, config, device):
     model.load_state_dict(torch.load(checkpoint_path+'/{}.ckpt-{}'.format(config['model_name'], config['latest_model_epoch']), map_location=device))
     return model
 
-def visualize(epoch, input_images, ouput_images, table_watch, labels=None):
+def visualize(epoch, input_images, ouput_images, table_watch, labels=None, table_dict=None):
     # Make labels into numpy array if not already
     if labels is not None:
         # Apply sigmoid to output (we need to apply the simgoid to the output since we use the BCEWithLogitsLoss (numpy ))
@@ -418,16 +448,23 @@ def visualize(epoch, input_images, ouput_images, table_watch, labels=None):
             plt.close(out_fig2)
   
 
-def save_inputs_outputs(n_image, epoch, input_, ouput_, config, labels=None):
-    path_inter_inputs = os.path.join(config['exp_path'], 'intermediate_results/inputs')
-    path_inter_outputs = os.path.join(config['exp_path'], 'intermediate_results/outputs')
+def save_inputs_outputs(n_image, epoch, input_, ouput_, config, labels=None, training=True):
+    if training:
+        path_inter_inputs = os.path.join(config['exp_path'], 'intermediate_results/training/inputs')
+        path_inter_outputs = os.path.join(config['exp_path'], 'intermediate_results/training/outputs')
+    else:
+        path_inter_inputs = os.path.join(config['exp_path'], 'intermediate_results/validation/inputs')
+        path_inter_outputs = os.path.join(config['exp_path'], 'intermediate_results/validation/outputs')
     
     make_dir_safely(path_inter_inputs)
     make_dir_safely(path_inter_outputs)
     if config['self_supervised']:
         # Apply sigmoid to output
         ouput_ = torch.sigmoid(ouput_)
-        path_inter_masks = os.path.join(config['exp_path'], 'intermediate_results/masks')
+        if training:
+            path_inter_masks = os.path.join(config['exp_path'], 'intermediate_results/training/masks')
+        else:
+            path_inter_masks = os.path.join(config['exp_path'], 'intermediate_results/validation/masks')
         make_dir_safely(path_inter_masks)
         labels = labels.cpu().detach().numpy()
         np.save(os.path.join(path_inter_masks,f"mask_image_{n_image}_epoch_{epoch}.npy"), labels)
