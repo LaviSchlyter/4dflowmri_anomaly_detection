@@ -1,6 +1,8 @@
 # =================================================================================
 # ============== GENERAL PACKAGE IMPORTS ==========================================
 # =================================================================================
+
+
 import os
 import re
 import torch 
@@ -214,7 +216,7 @@ if __name__ ==  "__main__":
     if config['model'] == 'vae':
             # Find the z_dim from the model name
             match = re.search(r'zdim(\d+)', config['model_name'])
-            model = VAE(z_dim=match.group(1), in_channels=4, gf_dim=8).to(device)
+            model = VAE(in_channels=4, gf_dim=8).to(device)
     else:
         raise ValueError(f"Unknown model: {config['model']}")
     model_path = os.path.join(project_code_root, config["model_directory"])
