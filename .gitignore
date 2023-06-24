@@ -166,4 +166,6 @@ logs/*
 wandb/*
 .vscode/*
 sbatch_log/*
+# Images
+*.png
 
