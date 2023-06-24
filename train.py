@@ -33,7 +33,7 @@ from helpers.data_loader import load_data, load_syntetic_data
 # ============== IMPORT MODELS ==================================================
 # =================================================================================
 
-from models.vae import VAE
+from models.vae import VAE, VAE_linear, VAE_convT
 from models.tilted_vae import TiltedVAE
 from models.mmd_vae import MMDVAE
 
@@ -45,8 +45,8 @@ if __name__ ==  "__main__":
 
     # Parse the arguments
     parser = argparse.ArgumentParser(description='Train a VAE model.')
-    parser.add_argument('--model', type=str, default="vae", help='Model to train.')
-    parser.add_argument('--model_name', type=str, default='0', help='Name of the model.')
+    parser.add_argument('--model', type=str, default="vae_convT", help='Model to train.')
+    parser.add_argument('--model_name', type=str, default=None, help='Name of the model.')
     parser.add_argument('--config_path', type=str, required= True, help='Path to the config file.')
     parser.add_argument('--checkpoint', type=str, default="logs", help='Path to the checkpoint file to restore.')
     parser.add_argument('--continue_training', type=bool, help='Continue training from checkpoint.')
@@ -84,32 +84,40 @@ if __name__ ==  "__main__":
     logging.info(f"Using device: {device}")
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
 
-    if str(config['model_name']) != str(0):
+    if str(config['model_name']) != str(0) and str(config['model_name']) != str(None):
         # Costume name given
         pass
-    if config['model'] == 'vae':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}"
+    elif config['model'] == 'vae':
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation'] if config['self_supervised'] else config['do_data_augmentation'] + '-f' +config['gen_loss_factor']}"
+    elif config['model'] == 'vae_linear':
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-zdim{config['z_dim']}-da{config['do_data_augmentation'] if config['self_supervised'] else config['do_data_augmentation'] + '-f' +config['gen_loss_factor']}"
+    elif config['model'] == 'vae_convT':
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation'] if config['self_supervised'] else config['do_data_augmentation'] + '-f' +config['gen_loss_factor']}"
     elif config['model'] == 'tvae':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}-zdim{config['z_dim']}-tilt{config['tilt']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}-zdim{config['z_dim']}-tilt{config['tilt']}"
     elif config['model'] == 'mmd_vae':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}-mmdf{config['mmd_loss_factor']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}-mmdf{config['mmd_loss_factor']}"
     else:
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}-e{config['epochs']}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}"
     
+    # Add extra note to name
+    if len(config['note']) > 0:
+        config['model_name'] = config['model_name'] + f"{'_' + config['note']}"
     wandb_mode = "online" # online/ disabled
     tag = ''
     if config['self_supervised']:
         tag = 'self_supervised'
 
     if config['use_synthetic_validation']:
-        tags = [config['model'], 'synthetic_validation', 'debug'].append(tag)
+        tags = [config['model'], 'synthetic_validation', 'debug']
+        tags.append(tag)
     else:
-        tags = [config['model'], 'debug'].append(tag)
+        tags = [config['model'], 'debug']
+        tags.append(tag)
     with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
         config = wandb.config
         print('after_init', config['model_name'])
 
-        
         # Check if it is a sweep
         sweep_id = os.environ.get("WANDB_SWEEP_ID")
         if sweep_id:
@@ -152,6 +160,18 @@ if __name__ ==  "__main__":
                 model = VAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
             else:
                 model = VAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+        elif config['model'] == 'vae_convT':
+            if config['self_supervised']:
+                # In this case we have a binary classification problem
+                model = VAE_convT(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = VAE_convT(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+        elif config['model'] == 'vae_linear':
+            if config['self_supervised']:
+                # In this case we have a binary classification problem
+                model = VAE_linear(in_channels=4, gf_dim=config['gf_dim'], z_dim=config['z_dim'], interpolate=False, out_channels=1).to(device)
+            else:
+                model = VAE_linear(in_channels=4, gf_dim=config['gf_dim'], z_dim=config['z_dim'], interpolate=False, out_channels=4).to(device)
         elif config['model'] == 'tvae':
             image_shape = [config['spatial_size_x'], config['spatial_size_y'], config['spatial_size_t'], 4]
             model = TiltedVAE(shape=image_shape, nz=config['z_dim'], base=32).to(device)
