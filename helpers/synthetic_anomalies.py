@@ -5,13 +5,15 @@ import os
 import sys
 import h5py
 import numpy as np
+import random
+
 
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection')
 
 
 from config import system as sys_config
 from helpers.utils import make_dir_safely
-from data_loader import load_data
+from helpers.data_loader import load_data
 
 
 from scipy.interpolate import RegularGridInterpolator
@@ -21,7 +23,22 @@ from scipy.ndimage import binary_fill_holes
 from scipy.ndimage.measurements import center_of_mass
 from scipy.spatial.distance import cdist
 
-#%%
+# For the patch blending we import from another directory
+sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/git_repos/many-tasks-make-light-work')
+from multitask_method.tasks.patch_blending_task import TestPatchInterpolationBlender, \
+    TestPoissonImageEditingMixedGradBlender, TestPoissonImageEditingSourceGradBlender
+
+from multitask_method.tasks.labelling import FlippedGaussianLabeller
+
+
+labeller = FlippedGaussianLabeller(0.2)
+
+
+# ==========================================
+# ==========================================
+# Random noise square patch
+# ==========================================
+# ==========================================
 def generate_noise(batch_size, mean_range = (0, 0.1), std_range = (0, 0.2), n_samples = 30):
     """
     Generates noise to be added to the images
@@ -61,40 +78,11 @@ def create_mask(im,center,width):
     return mask
 
 
-def create_deformation(im,center,width,polarity=1):
-    dims = np.array(np.shape(im))
-    mask = np.zeros_like(im)
-    
-    center = np.array(center)
-    xv,yv,zv = np.arange(dims[0]),np.arange(dims[1]),np.arange(dims[2])
-    interp_samp = RegularGridInterpolator((xv, yv, zv), im)
-    
-    for i in range(dims[0]):
-        for j in range(dims[1]):
-            for k in range(dims[2]):
-                dist_i = calc_distance([i,j,k],center)
-                displacement_i = (dist_i/width)**2
-                
-                if displacement_i < 1.:
-                    #within width
-                    if polarity > 0:
-                        #push outward
-                        diff_i = np.array([i,j,k])-center
-                        new_coor =  center + diff_i*displacement_i
-                        new_coor = np.clip(new_coor,(0,0,0),dims-1)
-                        mask[i,j,k]= interp_samp(new_coor)
-                        
-                    else:
-                        #pull inward
-                        cur_coor = np.array([i,j,k])
-                        diff_i = cur_coor-center
-                        new_coor = cur_coor + diff_i*(1-displacement_i)
-                        new_coor = np.clip(new_coor,(0,0,0),dims-1)
-                        mask[i,j,k]= interp_samp(new_coor)
-                else:
-                    mask[i,j,k] = im[i,j,k]
-    return mask
-
+# ==========================================
+# ==========================================
+# Deformation
+# ==========================================
+# ==========================================
 def create_deformation_chan(im,center,width,polarity=1):
     # Create the deformation and apply it to all channels
     dims = np.array(np.shape(im))
@@ -180,7 +168,7 @@ def generate_deformation_chan(im):
 # ==========================================
 
 
-# %%
+
 
 
 def find_closest_distance_edge(mask, center_of_mass):
@@ -215,68 +203,125 @@ def fill_circle(image, center, radius, mean, std):
 
 def create_hollow_noise(im, mean, std, ratio = 0.8):
     # We only create the mask in the x,y plane, we then propagate on time (later)
-
+    noisy_masks = np.zeros_like(im)
     # Copy to avoid changing the original image
     image_copy = copy.deepcopy(im)
-    # Take x,y dimensions
-    #image = image[:,:, 0,0]
-    image = image_copy[:,:,0,0]
+    for batch in range(im.shape[0]):
+        # Take x,y dimensions
+        #image = image[:,:, 0,0]
+        image = image_copy[batch,:,:,0,0]
 
-    # Binarize the image
-    image[image != 0] = 1
+        # Binarize the image
+        image[image != 0] = 1
 
-    # Fill holes in the image
-    image = binary_fill_holes(image).astype(int)
+        # Fill holes in the image
+        image = binary_fill_holes(image).astype(int)
 
-    # Find center of mass
-    center = center_of_mass(image)
+        # Find center of mass
+        center = center_of_mass(image)
 
-    # They return in (y,x) format
-    center = [center[1], center[0]]
+        # They return in (y,x) format
+        center = [center[1], center[0]]
 
-    # Round to integer
-    center = np.round(center).astype(int)
+        # Round to integer
+        center = np.round(center).astype(int)
 
-    # Find the closest distance from the center of mass to the edge of the mask (first zero)
-    radius = find_closest_distance_edge(image, center)
+        # Find the closest distance from the center of mass to the edge of the mask (first zero)
+        radius = find_closest_distance_edge(image, center)
 
-    # Generate random noise
-    mask, noise = fill_circle(image, center, radius, mean, std)
+        # Generate random noise
+        mask, noise = fill_circle(image, center, radius, mean, std)
 
-    # Create a smaller circle with same noise
-    radius_2 = radius * ratio
+        # Create a smaller circle with same noise
+        radius_2 = radius * ratio
 
-    mask_2, _ = fill_circle(image, center, radius_2, mean, std)
+        mask_2, _ = fill_circle(image, center, radius_2, mean, std)
 
-    # Subtract the two masks to create the hollow mask with noise
-    final_noise = noise*mask - noise*mask_2
+        # Subtract the two masks to create the hollow mask with noise
+        final_noise = noise*mask - noise*mask_2
 
-    # We need to extend the noise to the time dimension and channel dimensions
-    # Note that we only apply the hollow noise on timsteps [2:7]
-    # That's when the blood pumps and we can see potential anomalies 
+        # We need to extend the noise to the time dimension and channel dimensions
+        # Note that we only apply the hollow noise on timsteps 0-12
+        # That's when the blood pumps and we can see potential anomalies 
 
-    # Reshape the image to (x,y, 1, 1)
-    final_noise_resaped = final_noise.reshape(final_noise.shape[0], final_noise.shape[1], 1, 1)
+        # Reshape the image to (x,y, 1, 1)
+        final_noise_resaped = final_noise.reshape(final_noise.shape[0], final_noise.shape[1], 1, 1)
 
-    # Create an array of zeros of size (x,y, 24, 4)
-    noisy_mask = np.zeros((final_noise.shape[0], final_noise.shape[1], 24, 4), dtype=final_noise.dtype)    
+        # Create an array of zeros of size (x,y, 24, 4)
+        noisy_mask = np.zeros((final_noise.shape[0], final_noise.shape[1], 24, 4), dtype=final_noise.dtype)    
 
-    # Assign the noisy_mask image to the first 5 dimensions of 24
-    noisy_mask[:, :, 2:7, :] = final_noise_resaped
+        # Assign the noisy_mask image to the first 5 dimensions of 24
+        noisy_mask[:, :, :12, :] = final_noise_resaped
 
-    # Divide the magnitude noise by 10
-    noisy_mask = (noisy_mask[:,:,:,:]/[10,1,1,1])
+        # Divide the magnitude noise by 10
+        noisy_mask = (noisy_mask[:,:,:,:]/[10,1,1,1])
 
-    return noisy_mask
+        # Add batch dimension
+        noisy_mask = noisy_mask[np.newaxis, :, :, :, :]
 
+        # Add to the array
+        noisy_masks[batch,:,:,:,:] = noisy_mask
 
+    return noisy_masks
+
+# ==========================================
+# ==========================================
+# Patch blending
+# 1. Interpolation
+# 2. Mixed poisson blending (Color values are also blended)
+# 3. Non-mixed poisson blending (Focus is more on the preservation of structure and content)
+# These are taken from https://github.com/matt-baugh/many-tasks-make-light-work/tree/main
+# Corrected the return value from interpolation function
+# ==========================================
+# ==========================================
+
+def create_cube_mask(mask_size, WH, depth =7, inside = True):
+    """
+    This function creates a cube(rectangle) mask of size mask_size and width and height WH
+    where the time dimesion is depth and starts at 0 rather than in the center like the other dimensions
+    This is because we want the anomaly to be located in the first moments as it is when the blood pumps
+    """
+    # WH is the width height, we keep them the same
+    if inside:
+        # Create an mas of zeros
+        mask = np.zeros(mask_size)
+    else:
+        # Create an mask of ones
+        mask = np.ones(mask_size)
+    
+    # Set the cube region to zeros
+    # Set the rectangle region to zeros
+    start = (mask_size[0] // 2 - WH // 2, mask_size[1] // 2 - WH // 2, 0)
+    end = (start[0] + WH, start[1] + WH, depth)
+    
+    
+    if inside:
+        mask[start[0]:end[0], start[1]:end[1], start[2]:end[2]] = 1
+    else:
+        mask[start[0]:end[0], start[1]:end[1], start[2]:end[2]] = 0
+    
+    return mask
+
+def get_image_to_blend(loop_index, data, n_patients, z_slices = 64):
+        # We pick a random image to blend but same location 
+        z_slice = loop_index%z_slices
+        patient = loop_index//z_slices
+        # We pick a random patient different from the current one and take the same slice number
+        random_patient = random.randint(0, n_patients - 1)
+        while random_patient == patient:
+            random_patient = random.randint(0, n_patients - 1)
+        image_for_blend = data[random_patient * z_slice, ...]
+        image_for_blend = image_for_blend.transpose(3, 0, 1, 2)
+        return image_for_blend
 
 def prepare_and_write_synthetic_data(data,
                                     deformation_list,
-                                    filepath_output):
+                                    filepath_output,
+                                    z_slices = 64):
     
     data_shape = data.shape # [Number of patients * z_slices, x, y, t, num_channels]
-
+    n_patients = data_shape[0] // z_slices
+    print(f"Number of patients to process: {n_patients}")
     # ==========================================
     # we will stack all images along their z-axis
     # --> the network will analyze (x,y,t) volumes
@@ -301,9 +346,18 @@ def prepare_and_write_synthetic_data(data,
 
     # Noise generator
     noise_generator = generate_noise(batch_size = 1, n_samples= data_shape[0] * len(deformation_list))
+
+    # For the patch interpolation and poisson blending we need to create a mask
+    # In our case the mask is the boundaries of the blending for the source and final image
+    # Since we have the aorta in the middle of the image, we will create a mask that is a cube
+    # Centered in the first two dimesions, on the third we make it closer to the beginning
+    mask_shape = [data_shape[1], data_shape[2], data_shape[3]]
+    mask_blending = create_cube_mask(mask_shape, WH= 15, depth= 12,  inside=True).astype(np.bool8)
+    
     
     # For each type of deformation, we create a new image for each patient and each slice
     for i, deformation_type in enumerate(deformation_list):
+        print('Creating images for deformation type: ', deformation_type)
         if deformation_type == 'None':
             # We do not create a new image, we just copy the original image
             dataset['images'][i*data_shape[0]:(i+1)*data_shape[0],:,:,:,:] = data
@@ -318,20 +372,98 @@ def prepare_and_write_synthetic_data(data,
                     mean, std, noise = next(noise_generator)
                     noise = noise/[10,1,1,1]
                     dataset['images'][i*data_shape[0] + j,:,:,:,:] = image + noise
+                    # We make a mask of the noise so we binarize it
+                    noise[noise != 0] = 1
+                    
                     dataset['masks'][i*data_shape[0] + j,:,:,:,:] = noise
                     
                 elif deformation_type == 'deformation':
                     # We create a deformation in the image
-                    deformation, mask = generate_deformation_chan(image)
+                    deformation, mask_deformation = generate_deformation_chan(image)
                     dataset['images'][i*data_shape[0] + j,:,:,:,:] = deformation
-                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = mask
+
+                    # Binarize the mask
+                    mask_deformation[mask_deformation != 0] = 1
+                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = mask_deformation
                     
                 elif deformation_type == 'hollow circle':
                     noisy_mask = create_hollow_noise(image, mean=mean, std=std)
                     dataset['images'][i*data_shape[0] + j,:,:,:,:] = image + noisy_mask
+                    # We make a mask of the noise so we binarize it
+                    noisy_mask[noisy_mask != 0] = 1
                     dataset['masks'][i*data_shape[0] + j,:,:,:,:] = noisy_mask
-                elif deformation_type == 'patch':
-                    pass
+
+                elif deformation_type == 'patch_interpolation':
+                    # Here we don't except a batch dimension but channel should be first
+                    image = np.squeeze(image, axis=0)
+                    image = image.transpose(3, 0, 1, 2)
+                    image_for_blend = get_image_to_blend(j, data, n_patients, z_slices = z_slices)
+                    # Instantiate the patch interpolation class
+                    patch_interp_task = TestPatchInterpolationBlender(labeller, image_for_blend, mask_blending)
+
+                    # Create the blended image
+                    blended_image, anomaly_mask = patch_interp_task(image, mask_blending)
+
+                    # Binarize the mask
+                    anomaly_mask[anomaly_mask != 0] = 1
+                    # Add a channel dimension to mask repeating it for each channel
+                    anomaly_mask = np.repeat(anomaly_mask[..., np.newaxis], image.shape[0], axis=-1)
+                    
+                    blended_image = blended_image.transpose(1, 2, 3, 0)
+                    # Save image and mask
+                    dataset['images'][i*data_shape[0] + j,:,:,:,:] = blended_image
+                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = anomaly_mask
+
+
+                elif deformation_type == 'poisson_with_mixing':
+                    # Here we don't except a batch dimension but channel should be first
+                    image = np.squeeze(image, axis=0)
+                    image = image.transpose(3, 0, 1, 2)
+                    image_for_blend = get_image_to_blend(j, data, n_patients, z_slices = z_slices)
+
+                    # Instantiate the poisson with mixing class
+                    poisson_image_editing_mixed_task = TestPoissonImageEditingMixedGradBlender(labeller, image_for_blend, mask_blending)
+
+                    # Create the blended image
+                    blended_image, anomaly_mask = poisson_image_editing_mixed_task(image, mask_blending)
+
+                    # Binarize the mask
+                    anomaly_mask[anomaly_mask != 0] = 1
+                    # Add a channel dimension to mask repeating it for each channel
+                    anomaly_mask = np.repeat(anomaly_mask[..., np.newaxis], image.shape[0], axis=-1)
+                    
+
+                    blended_image = blended_image.transpose(1, 2, 3, 0)
+
+                    # Save image and mask
+                    dataset['images'][i*data_shape[0] + j,:,:,:,:] = blended_image
+                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = anomaly_mask
+
+                    
+                elif deformation_type == 'poisson_without_mixing':
+                    
+                    # Here we don't except a batch dimension but channel should be first
+                    image = np.squeeze(image, axis=0)
+                    image = image.transpose(3, 0, 1, 2)
+                    image_for_blend = get_image_to_blend(j, data, n_patients, z_slices = z_slices)
+
+                    # Instantiate the poisson without mixing class
+                    poisson_image_editing_source_task = TestPoissonImageEditingSourceGradBlender(labeller, image_for_blend, mask_blending)
+
+                    # Create the blended image
+                    blended_image, anomaly_mask = poisson_image_editing_source_task(image, mask_blending)
+
+                    # Binarize the mask
+                    anomaly_mask[anomaly_mask != 0] = 1
+                    # Add a channel dimension to mask repeating it for each channel
+                    anomaly_mask = np.repeat(anomaly_mask[..., np.newaxis], image.shape[0], axis=-1)
+                    blended_image = blended_image.transpose(1, 2, 3, 0)
+
+                    # Save image and mask
+                    dataset['images'][i*data_shape[0] + j,:,:,:,:] = blended_image
+                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = anomaly_mask
+
+                    
                 else:
                     raise ValueError('deformation_type must be either None, noisy, deformation, hollow circle or patch and not {}'.format(deformation_type))
 
@@ -341,16 +473,16 @@ def prepare_and_write_synthetic_data(data,
 
 
 
-def load_synthetic_data(data,
+def load_create_syntetic_data(data,
                         deformation_list,
+                        preprocessing_method,
                         idx_start,
                         idx_end,
-                        anomaly_type = 'all',
                         force_overwrite=False,
                         ):
     savepath= sys_config.project_code_root + "data"
     make_dir_safely(savepath)
-    dataset_filepath = savepath + f'/{anomaly_type}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
+    dataset_filepath = savepath + f'/{preprocessing_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
     
     if not os.path.exists(dataset_filepath) or force_overwrite:
         print('This configuration has not yet been preprocessed.')
@@ -360,6 +492,8 @@ def load_synthetic_data(data,
                                 deformation_list = deformation_list,
                                 filepath_output = dataset_filepath
                                 )
+        
+        print('Preprocessing done.')
     else:
         print('Already preprocessed this configuration. Loading now...')
     
@@ -371,8 +505,8 @@ if __name__ == '__main__':
     #%%
     # Type of deformation
     # 'None', 'noisy', 'deformation', 'hollow circle', 'patch', 'all'
-    #deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch']
-    deformation_list = ['None', 'noisy', 'deformation', 'hollow circle']
+    #deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+    deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
     deformation_type = 'all'
 
     # Set config
@@ -384,178 +518,105 @@ if __name__ == '__main__':
     _, images_vl, _ = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 35, idx_end_vl = 42, idx_start_ts = 0, idx_end_ts = 2)
 
     # Create synthetic anomalies
-    
-    data = load_synthetic_data(data = images_vl,
+
+    data = load_create_syntetic_data(data = images_vl,
                         deformation_list = deformation_list,
+                        preprocessing_method = config['preprocess_method'],
                         idx_start = 35,
                         idx_end = 42,
-                        force_overwrite=True)
-    
-    
-    
-                               
-    # Test the synthetic anomalies
-    import matplotlib.pyplot as plt
-    images = data['images']
-    masks = data['masks']
-    #%%
-    data.close()
-    image = images[32]
-    image.shape    
-    
-
-
-
+                        force_overwrite=False)
 
 # %%
-plt.imshow(images[30,:,:,3,1])
+
+
+
+
+"""
+
+from matplotlib import pyplot as plt
+images = data['images']
+masks = data['masks']
+print(images.shape), print(masks.shape)
+
+z_ = 154
+t = 3
+fig, ax = plt.subplots(ncols=7, nrows=2, figsize=(14, 5))
+
+for i, deformation in enumerate(deformation_list):
+    ax[0, i].imshow(images[z_ + i*64*7, :, :, t, 0])
+    ax[1, i].imshow(masks[z_ + i*64*7, :, :, t, 0])
+    ax[0, i].set_title(deformation)
+    ax[1, i].set_title(deformation + ' mask')
+
+# %%
+plt.imshow(images[0+ 7*64, :, :, 3, 0])
 plt.colorbar()
-# %%
-plt.imshow(images[(30) + 7*64,:,:,3,1])
-#plt.imshow(masks[(30) + 7*64,:,:,3,1])
-plt.colorbar()
-# %%
-plt.imshow(images[(30) + 14*64, :,:,3,1])
-plt.imshow(masks[(30) + 14*64, :,:,3,1], alpha= 0.1)
-# %%
-masks[0]
-# %%
-a = np.ones_like(masks[0])
-# %%
-b = (a/[10,1,1,1])
-
-# %%
-b[...,0]
-# %%
-
-patient = images_vl[40]
-image = patient[:,:,3,1]
-image[image != 0] = 1
-plt.imshow(image)
-plt.show()
 
 
 # %%
-# We want to binarize the image, all non-zero values are set to 1
+model_input = images[:]
+masks_input = masks[:]
+# %%
+from sklearn.metrics import average_precision_score
 
 
-# We want to fill in the holes in the image that may have zeros
-from scipy.ndimage import binary_fill_holes
-image = binary_fill_holes(image, structure=np.ones((3,3))).astype(int)
-plt.imshow(image)
-
+average_precision_score(masks_input.flatten(), model_input.flatten())
 
 # %%
-plt.imshow(image)
-
-
-print(image.shape)
-
-# Generate coordinate grids
-x, y = np.meshgrid(np.arange(image.shape[0]), np.arange(image.shape[1]))
-
-# Calculate center of mass
-center_of_mass = np.array([np.sum(x * image) / np.sum(image),
-                           np.sum(y * image) / np.sum(image)])
-
-print("Center of Mass:", center_of_mass)
-
-print("Center of Mass:", center_of_mass)
-
-# %%
-plt.imshow(image)
-plt.scatter(center_of_mass[0], center_of_mass[1], c='r')
-# %%
-center_of_mass
-# %%
-from scipy.spatial.distance import cdist
-
-def find_closest_zero_distance(mask, center_of_mass):
-    # Find the indices of zero values in the mask
-    zero_indices = np.argwhere(mask == 0)
-    
-    # Calculate the Euclidean distances between the zero indices and the center of mass
-    distances = cdist(zero_indices, [center_of_mass])
-    
-    # Find the minimum distance
-    closest_distance = np.min(distances)
-    
-    return closest_distance
-
-
-closest_distance = find_closest_zero_distance(image, center_of_mass)
-print("Closest distance:", closest_distance)
-
 # %%
 
 
+print(model_input.shape), print(masks_input.shape)
+# Tranpose to have channel is second dimension
+model_input = model_input.transpose(0, 4, 1, 2, 3)
+masks_input = masks_input.transpose(0, 4, 1, 2, 3)
+print(model_input.shape), print(masks_input.shape)
+model_output = np.random.randint(0, 2, model_input.shape)
+diff = model_input - model_output
+# Compute the AUC-ROC
+from sklearn.metrics import roc_auc_score
+auc = roc_auc_score(masks_input.flatten(), diff.flatten())
+print(auc)
 # %%
-def plot_circle(center, radius):
-    fig, ax = plt.subplots()
-    
-    # Create a circle patch with the given radius and center
-    circle = plt.Circle(center, radius, edgecolor='r', facecolor='none')
-    
-    # Add the circle to the plot
-    ax.add_patch(circle)
-    
-    # Set the aspect ratio to equal to ensure the circle appears circular
-    ax.set_aspect('equal')
-    
-    # Set the x and y limits to include the entire circle
-    #ax.set_xlim(center[0] - radius, center[0] + radius)
-    #ax.set_ylim(center[1] - radius, center[1] + radius)
-    #plt.imshow(image)
-    patient[:,:,3,1]
-    
-    # Show the plot
-    plt.show()
+plt.hist(masks_input.flatten())
 
-# Example usage
-center = center_of_mass
-radius = closest_distance
 
-plot_circle(center, radius)
+
+
+
+
+
+
+
+
 
 
 
 # %%
-import cv2
+# Import model
+from models.vae import VAE
+# Load model
+import torch
+import re
 
-def remove_isolated_zeros(binary_mask, min_area=5):
-    # Convert the binary mask to uint8 image format
-    image = binary_mask.astype(np.uint8)
+model_name = '20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100'
+model = 'vae'
+preprocess_method = "masked_slice"
+project_code_root = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/'
+latest_model_epoch = 760
 
-    # Perform a morphological closing operation to connect nearby ones
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    closed = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+model_directory = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs/vae/masked_slice/20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100'
+# Set device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if model == 'vae':
+    print('Loading VAE model')
+    match = re.search(r'zdim(\d+)', model_name)
+    model = VAE( in_channels=4, gf_dim=8).to(device)
+    config_model = 'vae'
 
-    # Perform a morphological opening operation to remove isolated zeros
-    opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernel)
-
-    # Find contours in the opened image
-    contours, _ = cv2.findContours(opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Filter out contours based on area
-    filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) >= min_area]
-
-    # Create a new binary mask with the filtered contours
-    filtered_mask = np.zeros_like(binary_mask)
-    cv2.drawContours(filtered_mask, filtered_contours, -1, 1, thickness=cv2.FILLED)
-
-    return filtered_mask
-
-
-filtered_mask = remove_isolated_zeros(image, min_area=20)
-
-closest_distance = find_closest_zero_distance(filtered_mask, center_of_mass)
-print("Closest distance:", closest_distance)
-# %%
-# Example usage
-center = center_of_mass
-radius = closest_distance
-
-plot_circle(center, radius)
-
+model_path = os.path.join(project_code_root, model_directory)
+model.load_state_dict(torch.load(model_path+'/{}.ckpt-{}'.format(model_name, latest_model_epoch), map_location=device))
 
 # %%
+
+"""
