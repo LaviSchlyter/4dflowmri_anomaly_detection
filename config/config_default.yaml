@@ -1,0 +1,81 @@
+note: ''
+synthetic_data_note: '' # This is when loading the synthetic data, if we want to load a specific one
+# =================================== TRAINING SETTINGS ===================================
+batch_size: 8
+#init_batches: 64 # Not used
+
+spatial_size_x: 32
+spatial_size_y: 32
+spatial_size_z: 64
+spatial_size_t: 24
+
+epochs: 41
+
+# Optimizer settings
+weight_decay: 0.0
+beta1: 0.9
+beta2: 0.999
+
+# Gradient clipping
+max_grad_norm: None
+
+#box_factor: 0 # Not used
+#bottleneck_factor: 0 # Not used
+
+# Influences the z_dim 
+gf_dim: 8
+
+lr: 5.0e-5
+# lr_decay_begin: 100 # Not used
+#lr_decay_end: 200 # This is the epoch number
+# log_freq: 250
+# ckpt_freq: 1000
+# test_freq: 1000
+# drop_prob: 0.1
+
+do_data_augmentation: False
+gen_loss_factor: 1 # How much more the reconstruction loss is weighted
+
+# Self-supervised
+#self_supervised: False
+
+# Model specific
+
+#tilt: 160 # TVAE
+# This does not influence VAE 
+#z_dim: 3072 # TVAE
+#mmd_loss_factor: 1000 # MMD-VAE
+
+# =================================== DATA SETTINGS ===================================
+# Use synthetic data for validation
+use_synthetic_validation: False
+
+# Data indexes
+idx_start_tr: 0
+idx_end_tr: 5
+idx_start_vl: 35
+idx_end_vl: 42
+
+# Metrics to use saving best model (all are always saved/computed)
+val_metric: "auc_roc" # AP, auc_roc
+
+# In which format to compute the metric
+validation_metric_format: '2Dslice' # "pixelwise" or "2Dslice" or "imagewise"
+
+
+# =================================== LOGGING SETTINGS ===================================
+validation_frequency: 10
+training_frequency: 10
+training_viz_frequency: 5
+validation_viz_frequency: 5
+
+
+
+# # =================================== CONTINUE TRAINING ===================================
+model_directory : 'logs/vae/masked_slice/20230601-1713_masked_slice_lr5.000e-05-e1000-bs8-zdim2888-daTrue-f100'
+model_name : #'20230601-1713_masked_slice_lr5.000e-05-e1000-bs8-zdim2888-daTrue-f100'
+latest_model_epoch : 80
+model:
+checkpoint:
+continue_training: False
+preprocess_method: 

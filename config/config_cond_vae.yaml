@@ -1,19 +1,20 @@
 #note: 'cut_out'
 #note: 'test_save_viz'
-note: 'poisson_mix_training' 
-#note: '' #poisson_mix_training
+note: '60_30_20'
+#note: '' #'poisson_mix_training'
 synthetic_data_note: 'decreased_interpolation_factor_cube_3' # This is when loading the synthetic data, if we want to load a specific one
 #'' or 'decreased_interpolation_factor' or 'without_noise'
 # =================================== TRAINING SETTINGS ===================================
 batch_size: 8
 #init_batches: 64 # Not used
+n_experts: 3
 
 spatial_size_x: 32
 spatial_size_y: 32
 spatial_size_z: 64
 spatial_size_t: 24
 
-epochs: 1500
+epochs: 100
 
 # Optimizer settings
 weight_decay: 0.0
@@ -23,21 +24,30 @@ beta2: 0.999
 # Gradient clipping
 max_grad_norm: None
 
+
+
+# This does not influence !
+#z_dim: 3072
 # This does but it is not directly the z_dim
 gf_dim: 8
 
-
-lr: 1.5e-3
-
+#lr: 5.0e-5
+lr: 1.8e-3
+# lr_decay_begin: 100 # Not used
+#lr_decay_end: 200 # This is the epoch number
+# log_freq: 250 
+# ckpt_freq: 1000
+# test_freq: 1000
+# drop_prob: 0.1
 
 do_data_augmentation: False
 use_scheduler: True
 gen_loss_factor: 100 # How much more the reconstruction loss is weighted 
 
+z_dim: 2048
+
 # Self-supervised method
 self_supervised: True # Then use_synthetic_validation must be True
-
-z_dim: 2048
 # =================================== DATA SETTINGS ===================================
 # Use synthetic data for validation
 use_synthetic_validation: True
@@ -57,7 +67,8 @@ idx_end_vl: 42
 # 2240, 3136: Remove all poisson (with and without mixing)
 # 2240, 2688: Remove poisson with mixing
 # 2688, 3136: Remove poisson without mixing
-
+# DOUBLE CHECK
+indices_to_remove: [2240, 3136]
 # If "without_noise" then we have 5 deformations (None, deformation,  patch_interpolation, poisson_w_mixing,poisson_wo_mixing)
 ## 0, 448: None
 ## 448, 896: deformation
@@ -66,7 +77,6 @@ idx_end_vl: 42
 ## 1792, 2240: poisson_wo_mixing
 ## 1344, 2240: Remove all poisson (with and without mixing)
 
-indices_to_remove: [2240, 2688] # DOUBLE CHECK (also in utils.py)
 
 # Metrics to use saving best model (all are always saved/computed)
 val_metric: "AP" # AP, auc_roc
@@ -86,7 +96,7 @@ validation_viz_frequency: 25
 # # =================================== CONTINUE TRAINING ===================================
 model_directory : 'logs/vae_convT/masked_slice/20230627-1759_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100'
 model_name : #20230627-1759_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100
-latest_model_epoch : #355
+latest_model_epoch : 355
 
 model: # Should I complete this ? 
 checkpoint:
