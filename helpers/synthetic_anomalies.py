@@ -250,7 +250,7 @@ def create_hollow_noise(im, mean, std, ratio = 0.8):
         # Create an array of zeros of size (x,y, 24, 4)
         noisy_mask = np.zeros((final_noise.shape[0], final_noise.shape[1], 24, 4), dtype=final_noise.dtype)    
 
-        # Assign the noisy_mask image to the first 5 dimensions of 24
+        # Assign the noisy_mask image to the first 12 dimensions of 24
         noisy_mask[:, :, :12, :] = final_noise_resaped
 
         # Divide the magnitude noise by 10
@@ -300,6 +300,42 @@ def create_cube_mask(mask_size, WH, depth =7, inside = True):
     else:
         mask[start[0]:end[0], start[1]:end[1], start[2]:end[2]] = 0
     
+    return mask
+
+def create_cube_mask_4D(mask_size, WH, depth=7, inside=True):
+    """
+    This function creates a 4D cube (rectangle) mask of size mask_size (a list of 4 elements)
+    and width and height WH where the time dimension is depth and starts at 0 rather than in the center
+    like the other dimensions. This is because we want the anomaly to be located in the first moments
+    as it is when the blood pumps.
+    """
+    if inside:
+        # Create a 3D mask of zeros
+        mask = np.zeros(mask_size)
+    else:
+        # Create a 3D mask of ones
+        mask = np.ones(mask_size)
+
+    
+    # Set the rectangle region to zeros
+    start = (
+        0,
+        mask_size[1] // 2 - WH // 2,
+        mask_size[2] // 2 - WH // 2,
+        0# For the fourth dimension
+    )
+    end = (
+        mask_size[0],
+        start[0] + WH,
+        start[1] + WH,
+        depth # For the fourth dimension
+    )
+
+    if inside:
+        mask[start[0]:end[0], start[1]:end[1], start[2]:end[2], start[3]:end[3]] = 1
+    else:
+        mask[start[0]:end[0], start[1]:end[1], start[2]:end[2], start[3]:end[3]] = 0
+
     return mask
 
 def get_image_to_blend(loop_index, data, n_patients, z_slices = 64):
@@ -479,10 +515,15 @@ def load_create_syntetic_data(data,
                         idx_start,
                         idx_end,
                         force_overwrite=False,
+                        note = '',
                         ):
     savepath= sys_config.project_code_root + "data"
     make_dir_safely(savepath)
-    dataset_filepath = savepath + f'/{preprocessing_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
+    if note != '':
+        dataset_filepath = savepath + f'/{preprocessing_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '_' + note + '.hdf5'
+
+    else:
+        dataset_filepath = savepath + f'/{preprocessing_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
     
     if not os.path.exists(dataset_filepath) or force_overwrite:
         print('This configuration has not yet been preprocessed.')
@@ -506,7 +547,7 @@ if __name__ == '__main__':
     # Type of deformation
     # 'None', 'noisy', 'deformation', 'hollow circle', 'patch', 'all'
     #deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-    deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+    deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
     deformation_type = 'all'
 
     # Set config
@@ -518,105 +559,14 @@ if __name__ == '__main__':
     _, images_vl, _ = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 35, idx_end_vl = 42, idx_start_ts = 0, idx_end_ts = 2)
 
     # Create synthetic anomalies
-
     data = load_create_syntetic_data(data = images_vl,
                         deformation_list = deformation_list,
                         preprocessing_method = config['preprocess_method'],
                         idx_start = 35,
                         idx_end = 42,
-                        force_overwrite=False)
-
-# %%
-
-
-
-
-"""
-
-from matplotlib import pyplot as plt
-images = data['images']
-masks = data['masks']
-print(images.shape), print(masks.shape)
-
-z_ = 154
-t = 3
-fig, ax = plt.subplots(ncols=7, nrows=2, figsize=(14, 5))
-
-for i, deformation in enumerate(deformation_list):
-    ax[0, i].imshow(images[z_ + i*64*7, :, :, t, 0])
-    ax[1, i].imshow(masks[z_ + i*64*7, :, :, t, 0])
-    ax[0, i].set_title(deformation)
-    ax[1, i].set_title(deformation + ' mask')
-
-# %%
-plt.imshow(images[0+ 7*64, :, :, 3, 0])
-plt.colorbar()
-
-
-# %%
-model_input = images[:]
-masks_input = masks[:]
-# %%
-from sklearn.metrics import average_precision_score
-
-
-average_precision_score(masks_input.flatten(), model_input.flatten())
-
-# %%
-# %%
-
-
-print(model_input.shape), print(masks_input.shape)
-# Tranpose to have channel is second dimension
-model_input = model_input.transpose(0, 4, 1, 2, 3)
-masks_input = masks_input.transpose(0, 4, 1, 2, 3)
-print(model_input.shape), print(masks_input.shape)
-model_output = np.random.randint(0, 2, model_input.shape)
-diff = model_input - model_output
-# Compute the AUC-ROC
-from sklearn.metrics import roc_auc_score
-auc = roc_auc_score(masks_input.flatten(), diff.flatten())
-print(auc)
-# %%
-plt.hist(masks_input.flatten())
+                        force_overwrite=False,
+                        note = 'without_noise_cube_3')
+    
 
 
 
-
-
-
-
-
-
-
-
-
-
-# %%
-# Import model
-from models.vae import VAE
-# Load model
-import torch
-import re
-
-model_name = '20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100'
-model = 'vae'
-preprocess_method = "masked_slice"
-project_code_root = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/'
-latest_model_epoch = 760
-
-model_directory = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs/vae/masked_slice/20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100'
-# Set device
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-if model == 'vae':
-    print('Loading VAE model')
-    match = re.search(r'zdim(\d+)', model_name)
-    model = VAE( in_channels=4, gf_dim=8).to(device)
-    config_model = 'vae'
-
-model_path = os.path.join(project_code_root, model_directory)
-model.load_state_dict(torch.load(model_path+'/{}.ckpt-{}'.format(model_name, latest_model_epoch), map_location=device))
-
-# %%
-
-"""
