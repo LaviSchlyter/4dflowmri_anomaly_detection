@@ -1,4 +1,5 @@
 import os 
+import timeit
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
@@ -40,39 +41,124 @@ def verify_leakage():
 # Apply Poisson Image Blending on the fly
 # ==================================================================
 # ==================================================================
+# TODO: edge case if anomaly would be in several places and then you'd start mixing slices together....
+# Chek that by looking at the original slices and make sure they follow each other with a step of 1
+def find_subsequence_and_complete(slices, subseq):
+    """
+        Find a subsequence in an array of slices and complete the subsequence if not found.
 
+        This function applies a modulus operation to the input array `slices` and 
+        attempts to find the subsequence `subseq` in the result. If the full subsequence 
+        is not found, the function finds the longest continuous sequence and completes 
+        it to match the target subsequence.
+
+        Parameters
+        ----------
+        slices : numpy.ndarray
+            An array of integers representing slices. Values should be positive.
+        subseq : numpy.ndarray
+            The target subsequence to be found in `slices`. 
+
+        Returns
+        -------
+        numpy.ndarray
+            The original slice values that correspond to the found (or completed) subsequence.
+            If the subsequence cannot be found or completed, the function returns None.
+
+        Examples
+        --------
+        >>> slices = np.array([35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45])
+        >>> sequence = np.array([0, 1, 2])
+        >>> find_subsequence_and_complete(slices, sequence)
+        array([36, 37, 38])
+
+    """
+    mod_slices = slices % len(subseq)  # modulus operation
+    
+    subseq_len = len(subseq)
+
+    # iterate over mod_slices to find subsequence
+    for i in range(len(mod_slices) - subseq_len + 1):
+        if np.all(mod_slices[i:i+subseq_len] == subseq):  # found subsequence
+            return slices[i:i+subseq_len]  # return the corresponding original slices
+
+    # if no full sequence is found, look for the longest subsequence
+    subsequences = [[0], [0, 1], [1, 2]]
+    for subseq in reversed(subsequences):
+        for i in range(len(mod_slices) - len(subseq) + 1):
+            if np.all(mod_slices[i:i+len(subseq)] == subseq):  # found subsequence
+                if subseq[0] == 0:  # if subsequence starts with 0, append next slice
+                    sequence = np.concatenate((slices[i:i+len(subseq)], [slices[i+len(subseq)] if i+len(subseq) < len(slices) else slices[-1]+1]))
+                    if len(sequence) < subseq_len: # if sequence length is less than subseq_len, append next slice
+                        sequence = np.concatenate((sequence, [sequence[-1]+1]))
+                    return sequence
+                else:  # if subsequence starts with 1 or 2, prepend previous slice
+                    sequence = np.concatenate(([slices[i-1] if i > 0 else slices[0]-1], slices[i:i+len(subseq)]))
+                    if len(sequence) < subseq_len: # if sequence length is less than subseq_len, append next slice
+                        sequence = np.concatenate((sequence, [sequence[-1]+1]))
+                    return sequence
+
+    # If we only have one element, we need to create two more slices based on the mod_slices value
+    if len(slices) == 1:
+        mod_value = mod_slices[0]
+        if mod_value == 0:
+            return np.array([slices[0], slices[0]+1, slices[0]+2])
+        elif mod_value == 1:
+            return np.array([slices[0]-1, slices[0], slices[0]+1])
+        else: # mod_value == 2
+            return np.array([slices[0]-2, slices[0]-1, slices[0]])
+
+    return np.array([0,1,2])  # if no such subsequence or continuous sequence found we give the original slices thus image
 def apply_blending(input_images, images_for_blend, mask_blending):
-    # Put channels is second dimension
-    input_images = np.transpose(input_images, (0,4,1,2,3))
-    images_for_blend = np.transpose(images_for_blend, (0,4,1,2,3))
+    # If the input_images are 4D + batch (b,x,y,t,c) we put channels in second dimension
+    if len(input_images.shape) == 5:
+        input_images = np.transpose(input_images, (0,4,1,2,3))
+        images_for_blend = np.transpose(images_for_blend, (0,4,1,2,3))
+    elif len(input_images.shape) == 6:
+        # If the input_images are 5D + batch (b,x,y,z,t,c) we put channels in second dimension
+        input_images = np.transpose(input_images, (0,5,1,2,3,4))
+        images_for_blend = np.transpose(images_for_blend, (0,5,1,2,3,4))
     # Inputs are all numpy arrays TODO: make sure they are (type hinting)
     # Accumlate the blended images and the anomaly masks
-    #blended_images = np.empty(input_images.shape)
     blended_images = []
     # The anomaly masks will not have  channel dimension
-    #anomaly_masks = np.empty((input_images.shape[0],input_images.shape[2], input_images.shape[3], input_images.shape[4]))
     anomaly_masks = []
 
 
     for input_, blender in zip(input_images, images_for_blend):
+        
         # Random flip 
         if np.random.rand() > 0.5:
             # Apply Poisson blending with mixing
             blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
             #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
             #blending_function = Cutout(labeller)
+            #blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
             blended_image, anomaly_mask = blending_function(input_, mask_blending)
             # output shape of blended image c,x,y,t
             # ouput shape of anomaly mask x,y,t
 
         else:
             # Apply Poisson blending with source
-            blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
+            
+            #blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
             #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
             #blending_function = Cutout(labeller)
+            blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
             blended_image, anomaly_mask = blending_function(input_, mask_blending)
             
-            
+        #
+        # If we have the extended slices for the conditional network then we need to remove the repeated sequences
+        
+        if len(input_images.shape) == 6:
+            z_slices_with_anomalies = np.unique(np.where(anomaly_mask != 0)[0])
+            sequence = np.array([0, 1, 2]) # We have three slices
+            z_slices_to_use = find_subsequence_and_complete(z_slices_with_anomalies, sequence)
+
+            blended_image = blended_image[:, z_slices_to_use, ...] # Channel in first dimension
+            anomaly_mask = anomaly_mask[z_slices_to_use, ...] # No channel dimension
+        
+        
             
             
         # Expand dims to add batch dimension
@@ -82,9 +168,11 @@ def apply_blending(input_images, images_for_blend, mask_blending):
         anomaly_masks.append(anomaly_mask)
     blended_images = np.concatenate(blended_images, axis = 0)    
     anomaly_masks = np.concatenate(anomaly_masks, axis = 0)
-    # Put channels back in last dimension
-    blended_images = np.transpose(blended_images, (0,2,3,4,1))
-    #anomaly_masks = np.transpose(anomaly_masks, (0,2,3,1))
+    # Put channels back in last dimension for the blended images
+    if len(input_images.shape) == 5:
+        blended_images = np.transpose(blended_images, (0,2,3,4,1))
+    elif len(input_images.shape) == 6:
+        blended_images = np.transpose(blended_images, (0,2,3,4,5,1))
     return blended_images, anomaly_masks
 
 # ==================================================================
@@ -101,8 +189,9 @@ def compute_losses_VAE(input_images, output_dict, config):
     gen_loss = l2loss(input_images, output_dict['decoder_output'])
 
     # Compute the residual loss
-    true_res = torch.abs(input_images - output_dict['decoder_output'])
-    res_loss = l2loss(true_res, output_dict['res'])
+    #true_res = torch.abs(input_images - output_dict['decoder_output'])
+    #res_loss = l2loss(true_res, output_dict['res'])
+    res_loss = torch.zeros_like(gen_loss)
 
     # Compute the latent loss
     lat_loss = kl_loss_1d(output_dict['mu'], output_dict['z_std'])   
