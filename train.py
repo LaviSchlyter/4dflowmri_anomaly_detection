@@ -34,6 +34,7 @@ from helpers.data_loader import load_data, load_syntetic_data
 # =================================================================================
 
 from models.vae import VAE, VAE_linear, VAE_convT
+from models.condconv import CondVAE, CondConv
 from models.tilted_vae import TiltedVAE
 from models.mmd_vae import MMDVAE
 
@@ -73,6 +74,9 @@ if __name__ ==  "__main__":
         if value is not None:
             config[arg] = value
 
+    # Get the slurm job id
+    config['AAslurm_job_id'] = os.environ.get("SLURM_JOB_ID")
+  
     # ================================================
     # Check that if self supervised is True, then use_synthetic_validation is also True
     # ================================================
@@ -88,31 +92,38 @@ if __name__ ==  "__main__":
         # Costume name given
         pass
     elif config['model'] == 'vae':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation'] if config['self_supervised'] else config['do_data_augmentation'] + '-f' +config['gen_loss_factor']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
     elif config['model'] == 'vae_linear':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-zdim{config['z_dim']}-da{config['do_data_augmentation'] if config['self_supervised'] else config['do_data_augmentation'] + '-f' +config['gen_loss_factor']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-zdim{config['z_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
     elif config['model'] == 'vae_convT':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation'] if config['self_supervised'] else config['do_data_augmentation'] + '-f' +config['gen_loss_factor']}"
-    elif config['model'] == 'tvae':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}-zdim{config['z_dim']}-tilt{config['tilt']}"
-    elif config['model'] == 'mmd_vae':
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}-mmdf{config['mmd_loss_factor']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
+    elif config['model'] == 'cond_vae':
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}-n_experts{config['n_experts']}"
+    elif config['model'] == 'cond_conv':
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}-n_experts{config['n_experts']}"
     else:
-        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{config['gen_loss_factor']}"
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{str(config['gen_loss_factor'])}"
     
     # Add extra note to name
     if len(config['note']) > 0:
         config['model_name'] = config['model_name'] + f"{'_' + config['note']}"
+    if config['use_synthetic_validation']:
+        if len(config['synthetic_data_note']) > 0:
+            config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}" + f"{'_' + config['synthetic_data_note']}"    
+        else:
+            config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}"
     wandb_mode = "online" # online/ disabled
     tag = ''
     if config['self_supervised']:
         tag = 'self_supervised'
+    else:
+        tag = 'reconstruction'
 
     if config['use_synthetic_validation']:
-        tags = [config['model'], 'synthetic_validation', 'debug']
+        tags = [config['model'], 'synthetic_validation', 'real_run1', config['validation_metric_format']]
         tags.append(tag)
     else:
-        tags = [config['model'], 'debug']
+        tags = [config['model'], 'real_run1']
         tags.append(tag)
     with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
         config = wandb.config
@@ -137,7 +148,7 @@ if __name__ ==  "__main__":
         logging.info(f"Logging to {log_dir}")
         logging.info('=============================================================================')
         # ================================================
-        # ======= DATA CONFIGURATION LOADING =====================
+        # ======= DATA CONFIGURATION LOADING =============
         # ================================================
 
         # Check if there is data leakage (some people in both train and test)
@@ -148,7 +159,7 @@ if __name__ ==  "__main__":
 
         # Load synthetic data for validation if needed
         if config['use_synthetic_validation']:
-            images_vl = load_syntetic_data(preprocess_method = config['preprocess_method'], idx_start=config['idx_start_vl'], idx_end=config['idx_end_vl'], sys_config = config_sys)
+            images_vl = load_syntetic_data(preprocess_method = config['preprocess_method'], idx_start=config['idx_start_vl'], idx_end=config['idx_end_vl'], sys_config = config_sys, note = config['synthetic_data_note'])
             logging.info(f"Using synthetic validation data with shape: {images_vl['images'].shape}")
         
         # ================================================
@@ -166,24 +177,20 @@ if __name__ ==  "__main__":
                 model = VAE_convT(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
             else:
                 model = VAE_convT(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
-        elif config['model'] == 'vae_linear':
+        elif config['model'] == 'cond_vae':
             if config['self_supervised']:
                 # In this case we have a binary classification problem
-                model = VAE_linear(in_channels=4, gf_dim=config['gf_dim'], z_dim=config['z_dim'], interpolate=False, out_channels=1).to(device)
+                model = CondVAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=1, num_experts=config['n_experts']).to(device)
             else:
-                model = VAE_linear(in_channels=4, gf_dim=config['gf_dim'], z_dim=config['z_dim'], interpolate=False, out_channels=4).to(device)
-        elif config['model'] == 'tvae':
-            image_shape = [config['spatial_size_x'], config['spatial_size_y'], config['spatial_size_t'], 4]
-            model = TiltedVAE(shape=image_shape, nz=config['z_dim'], base=32).to(device)
-            # Compute mu_star
-            mu_star = kld_min(config['tilt'], config['z_dim'])
-            if math.isnan(mu_star):
-                raise ValueError(f"mu_star is nan, check the tilt parameter: {config['tilt']}")
-
-            config['mu_star'] = mu_star
-
-        elif config['model'] == 'mmd_vae':
-            model = MMDVAE(in_channels=4, gf_dim=config['gf_dim']).to(device)
+                model = CondVAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=4, num_experts=config['n_experts']).to(device)
+        elif config['model'] == 'cond_conv':
+            # Then we need the neighbouts for the routing function 
+            config['get_neighbours'] = True
+            if config['self_supervised']:
+                # In this case we have a binary classification problem
+                model = CondConv(in_channels=4, gf_dim=config['gf_dim'], out_channels=1, num_experts=config['n_experts']).to(device)
+            else:
+                model = CondConv(in_channels=4, gf_dim=config['gf_dim'], out_channels=4, num_experts=config['n_experts']).to(device)
         else:
             raise ValueError(f"Unknown model: {config['model']}")
         
