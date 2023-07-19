@@ -81,7 +81,9 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                         )
             
             images_ts = data_ts['images_test']
-            labels_ts = data_ts['labels_test']
+            if with_test_labels:
+                labels_ts = data_ts['labels_test']
+            
 
     # ================================================
     # === If mask preprocessing is selected ==========
@@ -121,7 +123,8 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                         )
         
         images_ts = data_ts['masked_images_test']
-        labels_ts = data_ts['labels_test']
+        if with_test_labels:
+                labels_ts = data_ts['labels_test']
         
     
     # ================================================
@@ -163,7 +166,8 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 )
         
         images_ts = data_ts['sliced_images_test']
-        labels_ts = data_ts['labels_test']
+        if with_test_labels:
+                labels_ts = data_ts['labels_test']
 
 
     # ================================================
@@ -206,7 +210,8 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 )
         
         images_ts = data_ts['sliced_images_test']
-        labels_ts = data_ts['labels_test']
+        if with_test_labels:
+                labels_ts = data_ts['labels_test']
 
     
     # ================================================
@@ -248,7 +253,8 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                             )
         
         images_ts = data_ts['sliced_images_test']
-        labels_ts = data_ts['labels_test']
+        if with_test_labels:
+                labels_ts = data_ts['labels_test']
 
 
     # ================================================
@@ -291,7 +297,8 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                             )
         
         images_ts = data_ts['sliced_images_test']
-        labels_ts = data_ts['labels_test']
+        if with_test_labels:
+                labels_ts = data_ts['labels_test']
 
 
 
@@ -319,9 +326,13 @@ def load_syntetic_data(preprocess_method,
                         idx_start,
                         idx_end,
                         sys_config,
+                        note = '',
                         ):
     savepath= sys_config.project_code_root + "data"
-    dataset_filepath = savepath + f'/{preprocess_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
+    if len(note) > 0:
+        dataset_filepath = savepath + f'/{preprocess_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '_' + note + '.hdf5'
+    else:
+        dataset_filepath = savepath + f'/{preprocess_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
     
     if not os.path.exists(dataset_filepath):
         raise ValueError(f"Dataset {dataset_filepath} does not exist. Go to syntehtic_anomalies.py in helpers to generate the file")
