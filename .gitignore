@@ -168,4 +168,8 @@ wandb/*
 sbatch_log/*
 # Images
 *.png
+# numpy files
+*.npy
+# txt files
+*.txt
 
