@@ -1,3 +1,4 @@
+import timeit
 import torch
 import numpy as np
 import logging
@@ -9,17 +10,54 @@ from matplotlib import pyplot as plt
 
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+SEED = 0 
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+torch.cuda.manual_seed_all(0)
+
 # =================================================================================
 # ============== HELPER FUNCTIONS =============================================
 from batches import iterate_minibatches
 from utils import compute_losses_VAE, make_dir_safely, compute_losses_TVAE, compute_losses_MMDVAE \
     , apply_blending
 from metrics import compute_auc_roc_score, compute_average_precision_score
-from synthetic_anomalies import create_cube_mask
+from synthetic_anomalies import create_cube_mask, create_cube_mask_4D
 
 
 # Set colormap for consistency
 cmapper_gray = matplotlib.cm.get_cmap("gray")
+
+
+######################### TEMPORARY ##########################################
+def get_random_and_neighbour_indices(total_length, num_random, subject_length):
+    random_indices = np.random.choice(total_length, size=num_random, replace=False)
+
+    neighbour_indices = []
+    for idx in random_indices:
+        subject_num = idx // subject_length
+        slice_num = idx % subject_length
+        prev_idx = subject_num * subject_length + max(0, slice_num - 1)
+        next_idx = subject_num * subject_length + min(subject_length - 1, slice_num + 1)
+        neighbour_indices.append((prev_idx, idx, next_idx))
+    
+    return neighbour_indices
+
+def get_images_from_indices(images, indices):
+    images_with_neighbours = []
+    for prev_idx, idx, next_idx in indices:
+        prev_image = images[prev_idx] if prev_idx != idx else np.zeros_like(images[0])
+        image = images[idx]
+        next_image = images[next_idx] if next_idx != idx else np.zeros_like(images[0])
+        images_with_neighbours.append([prev_image, image, next_image])
+
+    return images_with_neighbours
+
+def get_combined_images(images, indices):
+    images_with_neighbours = get_images_from_indices(images, indices)
+    combined_images = np.stack(images_with_neighbours, axis=0)
+    
+    return combined_images
+
 # =================================================================================
 # ============== Evaluation function =============================================
 # =================================================================================
@@ -39,6 +77,8 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
 
     # set y to None
     y = None
+    # Set adjacent_batch_slices to None
+    adjacent_batch_slices = None
     # Loop over the batches
     # No data augmentation for validation set
     for nv, batch in enumerate(iterate_minibatches(images_vl, config, data_augmentation=False, with_labels= config['use_synthetic_validation'], remove_indices= config['self_supervised'], indices_to_remove = config['indices_to_remove'])):
@@ -52,15 +92,31 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
                 input_images, batch_z_slice = batch
             else:
                 raise ValueError('batch does not have the correct length, should be 2 or 3 and has length {}'.format(len(batch)))
+            # Turn batch slices into tensor
+
+            batch_z_slice = torch.from_numpy(batch_z_slice).to(device)
+
+            # If we are looking at neighbouring slices we need to adapt the inputs
+            if config.get('get_neighbours', False):
+                adjacent_images = np.copy(input_images)
+                adjacent_batch_slices = torch.from_numpy(adjacent_images).to(device).transpose(1,5).transpose(2,5).transpose(3,5).transpose(4,5).float()
+                adjacent_batch_slices = adjacent_batch_slices.reshape(adjacent_batch_slices.shape[0], -1, adjacent_batch_slices.shape[3], adjacent_batch_slices.shape[4], adjacent_batch_slices.shape[5])
+
+
+                input_images = input_images[:,1,...]
+        
 
             # Transfer the input_images to "device"
             input_images = torch.from_numpy(input_images).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+            
             # Forward pass
-            output_dict = model(input_images.float())
+            input_dict = {'input_images': input_images.float(), 'batch_z_slice': batch_z_slice.float(), 'adjacent_batch_slices': adjacent_batch_slices}
+            output_dict = model(input_dict)
             # Visualization
-            if nv%50 == 0:
-                visualize(epoch, input_images, output_dict['decoder_output'], val_table_watch, labels=y)
-                save_inputs_outputs(nv, epoch, input_images, output_dict['decoder_output'], config,labels=y, training= False)
+            if (epoch%(config['validation_viz_frequency']) == 0) or (epoch ==1):
+                if nv%200 == 0:
+                    visualize(epoch, input_images, output_dict['decoder_output'], val_table_watch, labels=y)
+                    save_inputs_outputs(nv, epoch, input_images, output_dict['decoder_output'], config,labels=y, training= False)
             
             if config['use_synthetic_validation'] and not config['self_supervised']:
                 # Take the difference between input and output (for the unsupervised way)
@@ -79,7 +135,7 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
                 val_masks.append(y.cpu().detach().numpy())
             else:
 
-                if config['model'] == 'vae':
+                if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
                     dict_loss = compute_losses_VAE(input_images, output_dict, config)
                     val_gen_losses += dict_loss['gen_loss'].mean().item()
                     val_res_losses += dict_loss['res_loss'].mean().item()
@@ -126,6 +182,7 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
             wandb.run.summary['best_val_epoch'] = epoch
             best_val_score = current_score
             wandb.run.summary[best_val_name] = best_val_score
+            wandb.run.summary['best_validation'] = best_val_score
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-best"))
     else:
         if val_losses < best_val_score:
@@ -140,7 +197,7 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
     else:
 
         
-        if config['model'] == 'vae':
+        if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
             # VAE model
             # Logging the validation losses
             logging.info('Epoch: {}, val_gen_losses: {:.5f}, val_lat_losses: {:.5f}, val_res_losses: {:.5f}, val_losses: {:.5f}'.format(epoch,  val_gen_losses/number_of_batches,val_lat_losses/number_of_batches, val_res_losses/number_of_batches, val_losses/number_of_batches))
@@ -194,20 +251,32 @@ def train(model: torch.nn.Module,
     print(f'validation_metric', config['val_metric'])
     print(f'List of indices of type of deformation to remove from validation since used in training: {config["indices_to_remove"]}')  
     
-    wandb.watch(model, log="all", log_freq=10)
+    wandb.watch(model, log="all", log_freq=200)
+    #wandb.watch(model, log=None)
     #wandb.define_metric("best_validation", summary="max")
 
 
     if config['use_synthetic_validation']:
         # Set the best validation to zero
         best_val_score = 0
+
+        
     else:
         # Set the best validation loss to infinity
         best_val_score = np.inf
+    # If we continue training, then we load the best val score recorded so far
+    if config['continue_training']:
+        best_val_score = config['best_val_score']
+        logging.info('Continuing training from epoch {} with best validation score {}'.format(already_completed_epochs, best_val_score))
     # If self supervised, generate a mask for the blending
     if config['self_supervised']:
-        mask_shape = images_tr.shape[1:-1] # (x,y,t)
-        mask_blending = create_cube_mask(mask_shape, WH= 20, depth= 12,  inside=True).astype(np.bool8)
+        if config.get('get_neighbours', False):
+            mask_shape = (60, images_tr.shape[1], images_tr.shape[2], images_tr.shape[3])
+            mask_blending = create_cube_mask_4D(mask_shape, WH=30, depth=20, inside=True).astype(np.bool8) # (x,y,repeated_axis_z, t)
+        else:
+
+            mask_shape = images_tr.shape[1:-1] # (x,y,t)
+            mask_blending = create_cube_mask(mask_shape, WH= 20, depth= 12,  inside=True).astype(np.bool8)
         criterion = torch.nn.BCEWithLogitsLoss()
         # Initiate wandb tables
         val_table_watch = wandb.Table(columns=["epoch", "input", "output", "mask"])
@@ -224,7 +293,7 @@ def train(model: torch.nn.Module,
         logging.info('Scheduler:', str(scheduler.__class__.__name__))
         
     
-        
+    adjacent_batch_slices = None
     # Loop over the epochs
     for epoch in tqdm(range(already_completed_epochs, config['epochs'])):
         # Start at 1
@@ -245,50 +314,91 @@ def train(model: torch.nn.Module,
         # Set y to None
         y = None
         
+        
 
         for nt, batch in enumerate(iterate_minibatches(images_tr, config, data_augmentation=config['do_data_augmentation'])):
+            
             if len(batch) == 3:
                 # We have the labels
                 input_images, y, batch_z_slice = batch  
                 #y = np.transpose(y, (0,4,1,2,3))
                 y = torch.from_numpy(y).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+                # batch_z_slice into tensor
+                
             elif len(batch) == 2:
                 input_images,batch_z_slice = batch
+
             else:
                 raise ValueError('batch does not have the correct length, should be 2 or 3 and has length {}'.format(len(batch)))
                 
-                
+            batch_z_slice = torch.from_numpy(batch_z_slice).to(device)
 
-            
-
-
-            # If self supervised, apply blending - type is defined within function.
+        
+            # If self supervised, apply blending - type of blending is defined within function.
             if config['self_supervised']:
-                # Batch size
-                random_indices = np.arange(input_images.shape[0])
-                np.random.shuffle(random_indices)
-                sorted_indices = np.sort(random_indices)
-                images_for_blend =  images_tr[sorted_indices, ...]
-                # Apply blending
-                input_images, anomaly_masks = apply_blending(input_images, images_for_blend, mask_blending)
-                # Transfer the anomaly_masks to "device" and add channel dim
-                anomaly_masks = torch.from_numpy(anomaly_masks).to(device).unsqueeze(dim =1)
+                 
+                if config.get('get_neighbours', False):
+                    # We look for three indices from within a patient to blend into the three slices contained in batch element
+                    indices_selected = get_random_and_neighbour_indices(images_tr.shape[0], config['batch_size'], config['spatial_size_z'])
+                    # Get the images with neighbours
+                    images_for_blend = get_combined_images(images_tr, indices_selected)
+
+                    # The functions to blend when on 4D data does not work well with dimensions that are two low
+                    # We thus repeat the the images on the z axis
+                    # Then repeat on the z axis 
+                    #images_for_blend = np.transpose(images_for_blend, (1,2,0,3,4))
+                    images_for_blend = np.repeat(images_for_blend, 20, axis=1) # We'll have image size 60 (3*20)
+                    # Same for inputs
+                    #input_images = np.transpose(input_images, (1,2,0,3,4))
+                    input_images = np.repeat(input_images, 20, axis=1) # We'll have image size 60 (3*20)
+                    
+                    adjacent_images, anomaly_masks = apply_blending(input_images, images_for_blend, mask_blending)
+                    
+                    # The adjacent_images has the prev, curr, next images 
+                    # The input to the network is the middle for each batch element
+                    input_images = adjacent_images[:, 1, ...]
+                    # Same for anomaly masks
+                    anomaly_masks = anomaly_masks[:, 1, ...]
+                    # Transfer the anomaly_masks to "device" and add channel dim
+                    anomaly_masks = torch.from_numpy(anomaly_masks).to(device).unsqueeze(dim =1)
+
+                    # The adjacent images are of size [b,3,32,32,24,4] for ascending aorta
+                    # We want to have the channel in the second dimension and add the new slices dimenison into the channel dimension
+                    adjacent_batch_slices = torch.from_numpy(adjacent_images).to(device).transpose(1,5).transpose(2,5).transpose(3,5).transpose(4,5).float()
+                    adjacent_batch_slices = adjacent_batch_slices.reshape(adjacent_batch_slices.shape[0], -1, adjacent_batch_slices.shape[3], adjacent_batch_slices.shape[4], adjacent_batch_slices.shape[5])
+                    # size [b,c*3, 32,32,24]
+
+                else:
+                    # We only have one image per element in the batch and pick a random one from the training set
+                
+                    random_indices = np.random.choice(images_tr.shape[0], size=input_images.shape[0], replace=False)
+                    sorted_indices = np.sort(random_indices)
+                    images_for_blend =  images_tr[sorted_indices, ...]
+
+                    # Apply blending
+                    input_images, anomaly_masks = apply_blending(input_images, images_for_blend, mask_blending)
+                    # Transfer the anomaly_masks to "device" and add channel dim
+                    anomaly_masks = torch.from_numpy(anomaly_masks).to(device).unsqueeze(dim =1)
+            else:
+                anomaly_masks = None
                 
             # Transfer the input_images to "device"
             input_images = torch.from_numpy(input_images).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
             
             # Reset the gradients
             optimizer.zero_grad()
-            # Forward pass
-            #ouput_images, z_mean, z_std, res = model(input_images.float()) #VAE
-            output_dict = model(input_images.float()) 
-            # Visualization
-            if nt%100 == 0:
-                visualize(epoch, input_images, output_dict['decoder_output'], tr_table_watch, labels=anomaly_masks)
-                save_inputs_outputs(nt, epoch, input_images, output_dict['decoder_output'], config, labels=anomaly_masks)
+            
+            input_dict = {'input_images': input_images.float(), 'batch_z_slice': batch_z_slice.float(), 'adjacent_batch_slices':adjacent_batch_slices}
+            output_dict = model(input_dict) 
+            if (epoch%(config['training_viz_frequency']) == 0) or (epoch ==1):
+                # Visualization
+                if nt%300 == 0:
+                    visualize(epoch, input_images, output_dict['decoder_output'], tr_table_watch, labels=anomaly_masks)
+                    save_inputs_outputs(nt, epoch, input_images, output_dict['decoder_output'], config, labels=anomaly_masks)
 
             # If doing a self-supervised task (anomaly detection)
             if config['self_supervised']:
+                # Here we don't use VAE loss 
                 dict_loss = {}
                 # Compute the binary cross entropy loss
                 dict_loss['loss'] = criterion(output_dict['decoder_output'], anomaly_masks.float())
@@ -297,7 +407,7 @@ def train(model: torch.nn.Module,
 
                 # Check keys in output_dict to adapt loss computation
                 # Compute the loss
-                if config['model'] == 'vae':
+                if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
                     dict_loss = compute_losses_VAE(input_images, output_dict, config)
                     gen_factor_losses += dict_loss['gen_factor_loss'].mean().item()
                     res_losses += dict_loss['res_loss'].mean().item()
@@ -330,13 +440,13 @@ def train(model: torch.nn.Module,
             scheduler.step()
             
                         
-        if epoch%(config['training_frequency']) == 0:
+        if (epoch%(config['training_frequency']) == 0) or (epoch ==1):
             # Check if self supervised
             if config['self_supervised']:
                 logging.info('Epoch: {}, train_loss: {:.5f}'.format(epoch, losses/number_of_batches))
                 wandb.log({'train_loss': round(losses/number_of_batches, 5)})
             else:
-                if config['model'] == 'vae':
+                if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
                     logging.info('Epoch: {}, train_gen_factor_loss: {:.5f},train_lat_loss: {:.5f}, train_res_loss: {:.5f}, train_loss: {:.5f}'.format(epoch, gen_factor_losses/number_of_batches, lat_losses/number_of_batches, res_losses/number_of_batches, losses/number_of_batches))
 
                     wandb.log({'train_gen_factor_loss': round(gen_factor_losses/number_of_batches, 5), 'train_lat_loss': round(lat_losses/number_of_batches, 5), 'train_res_loss': round(res_losses/number_of_batches, 5), 'train_loss': round(losses/number_of_batches, 5)})
@@ -353,7 +463,7 @@ def train(model: torch.nn.Module,
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-{epoch}"))
 
         # Evaluate the model on the validation set
-        if epoch%(config['validation_frequency']) == 0:
+        if (epoch%(config['validation_frequency']) == 0) or (epoch ==1):
             best_val_score = evaluate(model, epoch, images_vl, best_val_score, log_dir, config, device, val_table_watch)
             
             # TODO: implement visualization of the latent space ? 
