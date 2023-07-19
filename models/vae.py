@@ -650,6 +650,7 @@ class VAE_convT(nn.Module):
         self.decoder = Decoder(gf_dim = gf_dim, out_channels = out_channels, apply_initialization=apply_initialization)
 
     def forward(self, x):
+        x = x.get('input_images')
         # Run encoder network and get the latent space distribution
         z_mean, z_std, res = self.encoder(x)
 
@@ -663,13 +664,14 @@ class VAE_convT(nn.Module):
         return dict
 
 class VAE(nn.Module):
-    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4):
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, ):
         super(VAE, self).__init__()
 
         self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim)
         self.decoder = Decoder_interpolate(gf_dim = gf_dim, out_channels = out_channels)
 
     def forward(self, x):
+        x = x.get('input_images')
         # Run encoder network and get the latent space distribution
         z_mean, z_std, res = self.encoder(x)
 
@@ -690,6 +692,7 @@ class VAE_linear(nn.Module):
         self.decoder = Decoder_linear(gf_dim = gf_dim, out_channels = out_channels, z_dim=z_dim, apply_initialization=apply_initialization, interpolate= interpolate)
 
     def forward(self, x):
+        x = x.get('input_images')
         # Run encoder network and get the latent space distribution
         z_mean, z_std, res = self.encoder(x)
 
