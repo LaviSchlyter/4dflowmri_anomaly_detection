@@ -1,8 +1,11 @@
-# %%
+# In this file we evaluate the best model on the test set and visualize the results
 import numpy as np
+
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc, average_precision_score
+from scipy import stats
 import os
+import re
 import sys
 import torch
 import h5py
@@ -26,12 +29,13 @@ np.random.seed(seed)
 random.seed(seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-# %%
+
 
 from helpers.utils import make_dir_safely
 from config import system_eval as config_sys
-from helpers.data_loader import load_data
+from helpers.data_loader import load_data, load_syntetic_data
 from helpers.metrics import RMSE, compute_auc_roc_score, compute_average_precision_score
+
 
 # Import models
 from models.vae import VAE, VAE_convT, VAE_linear
@@ -61,7 +65,7 @@ from helpers.visualization import plot_batches_SSL, plot_batches_SSL_in_out
 
 
 
-#%%
+
 
 def plot_scores(healthy_scores,sick_scores, level, agg_function = np.mean, data = "test", deformation = None, note = None):
     # save_dir
@@ -415,7 +419,6 @@ def apply_deformation(deformation_list, data, save_dir, actions):
         end_idx = batch_size
 
 def validation_metrics(anomaly_scores, masks, deformation = None):
-                
                 ## Patient wise
                 anomalous_subjects_indexes = np.max(masks, axis=(1,2,3,4,5)).astype(bool)
                 healthy_subjects_indexes = np.logical_not(np.max(masks, axis=(1,2,3,4,5)).astype(bool))
@@ -429,7 +432,6 @@ def validation_metrics(anomaly_scores, masks, deformation = None):
                 plot_scores(healthy_scores, anomalous_scores, level = 'patient', agg_function= np.mean, data="validation",deformation = deformation)
                 plot_scores(healthy_scores, anomalous_scores, level = 'imagewise', agg_function= np.mean, data="validation",deformation = deformation)
 
-#   
                 ## Image wise
                 anomalous_subjects_indexes = np.max(masks, axis=(2,3,4,5)).astype(bool)
                 healthy_subjects_indexes = np.logical_not(np.max(masks, axis=(2,3,4,5)).astype(bool))
@@ -440,7 +442,7 @@ def validation_metrics(anomaly_scores, masks, deformation = None):
                     compute_average_precision(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function=np.mean, data = "validation")
                 else:
                     logging.info('Image Wise: Same class for all - cannot compute')
-#   
+
                 ## 2D slice wise
                 anomalous_subjects_indexes = np.max(masks, axis=(3,4)).astype(bool)
                 healthy_subjects_indexes = np.logical_not(np.max(masks, axis=(3,4)).astype(bool))
@@ -486,7 +488,7 @@ def plot_slices(images_dict, most_separable_patients_z_slices, least_separable_p
                 min_time_step = np.argmin(np.nanmin(image[min_index-1][:, :, :, 1], axis=(0, 1)))
                 
                 time_steps_to_plot = [max_time_step, min_time_step]
-                fig, axs = plt.subplots(2, 2, figsize=(8,8))
+                fig, axs = plt.subplots(2, 2, figsize=(8,4))
                 # extract the max and min slices (both at max time step)
                 max_image = image[max_index-1][:, :, max_time_step, 1]
                 min_image = image[min_index-1][:, :, max_time_step, 1]
@@ -552,32 +554,127 @@ def plot_slices(images_dict, most_separable_patients_z_slices, least_separable_p
                 save_path = os.path.join(save_dir_test_images, f'{case}_{image_name}_subject_index_{subject_index}_time_steps_{time_steps}.png')
                 plt.savefig(save_path)
                 plt.close()
-#%%
 
+def return_indexes_to_remove(model_name, deformation_list, images, with_noise = False):
+            
+            n_images = images.shape[0]
+            indexes = set(np.arange(n_images))
+            if with_noise:
+                if 'with_interpolation_training' in model_name:
+                    deformation_list.remove('patch_interpolation')
+                    indices_to_remove = [896, 1344]
+                elif 'poisson_mix_training' in model_name:
+                    deformation_list.remove('poisson_with_mixing')
+                    indices_to_remove = [1344, 1792]
+                else:
+                    deformation_list = ['None','deformation', 'patch_interpolation']
+                    indices_to_remove = [1344, 2240]
+            else:
+                if 'with_interpolation_training' in model_name:
+                    deformation_list.remove('patch_interpolation')
+                    indices_to_remove = [1792, 2240]
+                elif 'poisson_mix_training' in model_name:
+                    deformation_list.remove('poisson_with_mixing')
+                    indices_to_remove = [2240, 2688]
+                else:
+                    deformation_list = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation']
+                    indices_to_remove = [2240, 3136]
+            
+            
+            indices_to_remove = set(np.arange(indices_to_remove[0], indices_to_remove[1]))
+            diff = indexes - indices_to_remove
+            indexes = np.array(list(diff))
+            return indexes, deformation_list
+
+def statistical_tests(healthy_scores, anomalous_scores):
+    
+    # Conduct Shapiro-Wilk Test for Normality
+    _, p_sick = stats.shapiro(anomalous_scores)
+    _, p_healthy = stats.shapiro(healthy_scores)
+
+    logging.info(f"Sick scores normality test p-value: {p_sick}")
+    logging.info(f"Healthy scores normality test p-value: {p_healthy}")
+    logging.info('If P-value > 0.05, the data is normally distributed\n')
+
+    # If p-value > 0.05 for both, the data is normally distributed
+
+    # Conduct Levene's Test for Equality of Variances
+    _, p_levene = stats.levene(anomalous_scores, healthy_scores)
+    logging.info(f"Equality of variances test p-value: {p_levene}")
+    logging.info('If P-value > 0.05, variances are equal\n')
+
+    # If p-value > 0.05, variances are equal
+
+    # Depending on the above results, conduct appropriate t-test
+    if p_sick > 0.05 and p_healthy > 0.05 and p_levene > 0.05:
+        logging.info('Normally distributed and equal variances - Conduct Student\'s t-test')
+        # Conduct Student's t-test
+        _, p_ttest = stats.ttest_ind(anomalous_scores, healthy_scores)
+        logging.info(f"Student's t-test p-value: {p_ttest}")
+    elif p_sick <= 0.05 or p_healthy <= 0.05 or p_levene <= 0.05:
+        logging.info('Not normally distributed or unequal variances - Conduct Mann-Whitney U Test')
+        # Conduct Mann-Whitney U Test
+        _, p_mannwhitney = stats.mannwhitneyu(anomalous_scores, healthy_scores)
+        logging.info(f"Mann-Whitney U test p-value: {p_mannwhitney}\n")
+        # Or Conduct Welch's t-test
+        logging.info('Conduct Welch\'s t-test')
+        _, p_welch = stats.ttest_ind(anomalous_scores, healthy_scores, equal_var=False)
+        logging.info(f"Welch's t-test p-value: {p_welch}\n")
+        # Not valid but still conduct T-test
+        logging.info('Conduct Student\'s t-test - Careful Not Valid')
+        _, p_ttest = stats.ttest_ind(anomalous_scores, healthy_scores)
+        logging.info(f"Student's t-test p-value: {p_ttest}")
+    logging.info('If p < 0.05, the difference is statistically significant at the 5% level')
 
 if __name__ == '__main__':
-    #%%
+    
     models_dir = "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs"
 
-    list_of_experiments_paths = ["vae_convT/masked_slice/20230622-1517_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse"]
-    #["cond_vae/masked_slice/20230630-1209_cond_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100-n_experts3",
-                                # "cond_vae/masked_slice/20230630-1212_cond_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100-n_experts3_without_synthetic_validation",
-                                # "cond_vae/masked_slice/20230630-1541_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3",
-                                # "cond_vae/masked_slice/20230630-1547_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training",
-                                # "cond_vae/masked_slice/20230630-1549_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3_cut_out",
-                                # "vae_convT/masked_slice/20230622-1517_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse",
-                                # "vae_convT/masked_slice/20230627-1757_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f1",
-                                # "vae_convT/masked_slice/20230627-1759_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100",
-                                # "vae_convT/masked_slice/20230622-1538_vae_convT_masked_slice_SSL_lr1.000e-03_scheduler-e800-bs8-gf_dim8-daFalse_interpolation_training",
-                                # "vae_convT/masked_slice/20230622-1535_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_interpolation_training",
-                                # "vae_convT/masked_slice/20230622-1521_vae_convT_masked_slice_SSL_lr1.000e-03_scheduler-e800-bs8-gf_dim8-daFalse",
-                                # "vae/masked_slice/20230622-1542_vae_masked_slice_SSL_lr1.000e-03_scheduler-e800-bs8-gf_dim8-daFalse_interpolation_training",
-                                # "vae/masked_slice/20230622-1545_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_interpolation_training",
-                                # "vae/masked_slice/20230622-1558_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse",
-                                # "vae/masked_slice/20230626-1929_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_cut_out",
-                                # "vae/masked_slice/20230627-1805_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100",
-                                # "vae/masked_slice/20230627-1816_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100_no_synthetic_validation"]
-
+    list_of_experiments_paths = ["cond_vae/masked_slice/20230712-1205_cond_vae_masked_slice_SSL_lr1.000e-03-e1200-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]#,
+                                #"cond_vae/masked_slice/20230712-1221_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1200-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
+    #["cond_vae/masked_slice/20230711-1613_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
+                        #["vae_convT/masked_slice/20230704-2003_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor",
+                        #"vae_convT/masked_slice/20230704-2005_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_decreased_interpolation_factor",
+                        #"vae_convT/masked_slice/20230704-2010_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_without_noise",
+                        #"vae_convT/masked_slice/20230704-2020_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_with_interpolation_training_2Dslice",
+                        #"vae_convT/masked_slice/20230703-2144_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_with_interpolation_training_imagewise",
+                        #"vae_convT/masked_slice/20230703-2140_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_imagewise"]
+                            #["cond_vae/masked_slice/20230710-2006_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3_cut_out_2Dslice_decreased_interpolation_factor_cube_3",
+                            #"cond_vae/masked_slice/20230710-2004_cond_vae_masked_slice_SSL_lr1.500e-03_scheduler-e800-bs8-gf_dim8-daFalse-n_experts3_poisson_mix_training_2Dslice_decreased_interpolation_factor_cube_3",
+                            #"cond_vae/masked_slice/20230710-2000_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3_poisson_mix_training_2Dslice_decreased_interpolation_factor_cube_3",
+                            #"cond_vae/masked_slice/20230710-1946_cond_vae_masked_slice_SSL_lr1.500e-03_scheduler-e800-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3",
+                            #"vae_convT/masked_slice/20230705-1612_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3",
+                            #"vae_convT/masked_slice/20230704-2016_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_2Dslice",
+                            #"vae_convT/masked_slice/20230627-1818_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100_no_synthetic_validation",
+                            #"vae_convT/masked_slice/20230627-1759_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100",
+                            #"vae_convT/masked_slice/20230705-1621_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_without_noise_cube_3",
+                            #"vae_convT/masked_slice/20230705-1612_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3"]
+                            #"cond_vae/masked_slice/20230704-2004_cond_vae_masked_slice_SSL_lr1.000e-03-e1000-bs8-gf_dim8-daFalse-n_experts3_poisson_mix_training_2Dslice_decreased_interpolation_factor",
+                            #"cond_vae/masked_slice/20230703-2150_cond_vae_masked_slice_lr1.000e-03-e1000-bs8-gf_dim8-daFalse-f100-n_experts3_imagewise",
+                            #"cond_vae/masked_slice/20230702-1655_cond_vae_masked_slice_SSL_lr1.000e-03-e1000-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training",
+                            #"cond_vae/masked_slice/20230702-1710_cond_vae_masked_slice_SSL_lr1.000e-03_scheduler-e1000-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training",
+                            #"cond_vae/masked_slice/20230702-1715_cond_vae_masked_slice_SSL_lr1.000e-03-e1000-bs8-gf_dim8-daFalse-n_experts3",
+                            #"cond_vae/masked_slice/20230702-1721_cond_vae_masked_slice_SSL_lr1.000e-03_scheduler-e1000-bs8-gf_dim8-daFalse-n_experts3",
+                            #"cond_vae/masked_slice/20230702-1851_cond_vae_masked_slice_SSL_lr1.000e-03_scheduler-e1000-bs8-gf_dim8-daFalse-n_experts6",
+                            #"cond_vae/masked_slice/20230630-1209_cond_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100-n_experts3",
+                            #"cond_vae/masked_slice/20230630-1212_cond_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100-n_experts3_without_synthetic_validation",
+                            #"cond_vae/masked_slice/20230630-1541_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3",
+                            #"cond_vae/masked_slice/20230702-1655_cond_vae_masked_slice_SSL_lr1.000e-03-e1000-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training"]
+                            
+                            #"vae_convT/masked_sliced_full_aorta/20230703-2135_vae_convT_masked_sliced_full_aorta_SSL_lr1.000e-03-e100-bs16-gf_dim8-daFalse_2Dslice"
+                            #"cond_vae/masked_slice/20230630-1549_cond_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse-n_experts3_cut_out"
+                            #"vae_convT/masked_slice/20230622-1517_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse",
+                            #"vae_convT/masked_slice/20230627-1757_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f1",
+                            #"vae_convT/masked_slice/20230627-1759_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100",
+                            #"vae_convT/masked_slice/20230622-1538_vae_convT_masked_slice_SSL_lr1.000e-03_scheduler-e800-bs8-gf_dim8-daFalse_interpolation_training",
+                            #"vae_convT/masked_slice/20230622-1535_vae_convT_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_interpolation_training",
+                            #"vae_convT/masked_slice/20230622-1521_vae_convT_masked_slice_SSL_lr1.000e-03_scheduler-e800-bs8-gf_dim8-daFalse",
+                            #"vae/masked_slice/20230622-1542_vae_masked_slice_SSL_lr1.000e-03_scheduler-e800-bs8-gf_dim8-daFalse_interpolation_training",
+                            #"vae/masked_slice/20230622-1545_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_interpolation_training",
+                            #"vae/masked_slice/20230622-1558_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse",
+                            #"vae/masked_slice/20230626-1929_vae_masked_slice_SSL_lr1.000e-03-e800-bs8-gf_dim8-daFalse_cut_out",
+                            #"vae/masked_slice/20230627-1805_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100",
+                            #"vae/masked_slice/20230627-1816_vae_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100_no_synthetic_validation"]
     # ========================================================  
     # ==================== LOGGING CONFIG ====================
     # ========================================================
@@ -590,55 +687,27 @@ if __name__ == '__main__':
     
     # Pick same random images
     keep_same_indices = True
-    # Number of slices to visualize
-    n_indices = 320
     # Batch size
     batch_size = 16
-    actions = ["evaluate","visualize"] # ["visualize", "evaluate"], "evaluate" 
+    actions = ["evaluate"] # ["visualize", "evaluate"], "evaluate" 
 
-    data_to_visualize = ["test"]  # ["validation", "healthy_unseen", "test"] 
+    data_to_visualize = ["test"]  # ["validation", "test"] 
 
     # Load the data
     data_dir = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data'
-    data_vl = h5py.File(os.path.join(data_dir, 'masked_slice_anomalies_images_from_35_to_42.hdf5'), 'r')
-    images_vl  = data_vl['images']
-    labels_vl = data_vl['masks']
-    # Load the two healthy subjects not seen during training/validation
-    # Now the healthy unseen is on the test set
-
-    data_healthy_unseen = h5py.File(os.path.join(data_dir, 'val_masked_sliced_images_from_42_to_44.hdf5'), 'r')
-    images_healthy_unseen = data_healthy_unseen['sliced_images_val']
-
-    # Load the test set
-    # You need to create a config dict containing the preprocessing method
-    config = {'preprocess_method': 'masked_slice'}
-    spatial_size_z = 64
+    
     # Please note the test labels are just a mask of ones for sick patients and zero for healthy
-    _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_vl=35, idx_end_vl=42,idx_start_ts=0, idx_end_ts=20, with_test_labels= True)
-    #h5py.File(os.path.join(data_dir, 'test_masked_sliced_images_from_0_to_20.hdf5'), 'r')
-    deformation_list = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-    deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-#%%
-
-
-
-
-    
-
-#%%
-    # Logging the shapes
-    logging.info(f"Validation images shape: {images_vl.shape}")
-    logging.info(f"Validation labels shape: {labels_vl.shape}")
-    logging.info(f"Healthy unseen images shape: {images_healthy_unseen.shape}")
-    logging.info(f"Test images shape: {images_test.shape}")
-    logging.info(f"Test labels shape: {labels_test.shape}")
-
-
-
     
     
+    deformation_list = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing'] 
+    # Create dictionary to map the current test subjects to their ID
+    test_subjects_dict = {0: "MACDAVD_201_", 1: "MACDAVD_202_", 2: "MACDAVD_203_", 3: "MACDAVD_301_", 4: "MACDAVD_302_", 5: "MACDAVD_303_", 6: "MACDAVD_304_",
+                          7: "MACDAVD_125_", 8: "MACDAVD_127_", 9: "MACDAVD_129_", 10: "MACDAVD_131_", 11: "MACDAVD_133_", 12: "MACDAVD_139_", 13: "MACDAVD_141_",
+                          14: "MACDAVD_143_", 15: "MACDAVD_145_", 16: "MACDAVD_121_", 17:"MACDAVD_137_", 18: "MACDAVD_123_", 19: "MACDAVD_135_", 20: "MACDAVD_206_",
+                          21: "MACDAVD_208_", 22: "MACDAVD_209_", 23: "MACDAVD_311_", 24:"MACDAVD_404_", 25:"MACDAVD_156_", 26: "MACDAVD_157_", 27: "MACDAVD_158_",
+                          28: "MACDAVD_159_", 29: "MACDAVD_160_", 30: "MACDAVD_161_",31: "MACDAVD_163_", 32: "MACDAVD_164_", 33: "MACDAVD_165_"}
 
-    noise_generator = generate_noise(batch_size = batch_size,mean_range = (0, 0.1), std_range = (0, 0.2), n_samples= images_healthy_unseen.shape[0]) 
+    #noise_generator = generate_noise(batch_size = batch_size,mean_range = (0, 0.1), std_range = (0, 0.2), n_samples= images_healthy_unseen.shape[0]) 
 
     for model_rel_path in list_of_experiments_paths:
 
@@ -649,7 +718,66 @@ if __name__ == '__main__':
         model_str = model_rel_path.split("/")[0]
         preprocess_method = model_rel_path.split("/")[1]
         model_name = model_rel_path.split("/")[-1]
+        # Several things
+        #1. Load the correct synthetic dataset
+        #2. Get the appropriate deformation list
+        #3. Remove indices which were used for training
+
+        # We need to adapt the synthetic validation data based on preprocess_method as well as the spatial z and the model used
+        if model_name.__contains__('without_noise_cube_3'):
+            synthetic_data_note = 'without_noise_cube_3'
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            images_vl  = data_vl['images']
+            labels_vl = data_vl['masks']
+            deformation_list_validation_set = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+            validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
+        elif model_name.__contains__('without_noise'):
+            synthetic_data_note = 'without_noise'
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            images_vl  = data_vl['images']
+            labels_vl = data_vl['masks']
+            deformation_list_validation_set = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+            validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
+        elif model_name.__contains__('decreased_interpolation_factor_cube_3'):
+            synthetic_data_note = 'decreased_interpolation_factor_cube_3'
+            deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            images_vl  = data_vl['images']
+            labels_vl = data_vl['masks']
+            validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
+        elif model_name.__contains__('decreased_interpolation_factor'):
+            synthetic_data_note = 'decreased_interpolation_factor'
+            deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            images_vl  = data_vl['images']
+            labels_vl = data_vl['masks']
+            validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
+        else:
+            synthetic_data_note = ''
+            deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+            
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            images_vl  = data_vl['images']
+            labels_vl = data_vl['masks']
+            validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
+        config = {'preprocess_method': preprocess_method}
+        if preprocess_method.__contains__('full_aorta'):
+            spatial_size_z = 256
+        else:
+            spatial_size_z = 64
+        # Please note the test labels are just a mask of ones for sick patients and zero for healthy
+        _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_vl=35, idx_end_vl=42,idx_start_ts=0, idx_end_ts=34, with_test_labels= True)
+
         
+
+        # ========================================================
+        # Logging the shapes
+        logging.info(f"Validation images shape: {images_vl.shape}")
+        logging.info(f"Validation labels shape: {labels_vl.shape}")
+        #logging.info(f"Healthy unseen images shape: {images_healthy_unseen.shape}")
+        logging.info(f"Test images shape: {images_test.shape}")
+        logging.info(f"Test labels shape: {labels_test.shape}")
+                
         
 
         self_supervised = True if "SSL" in model_name else False
@@ -666,10 +794,12 @@ if __name__ == '__main__':
             else:
                 model = VAE_convT(in_channels=4, out_channels=4, gf_dim=8)
         elif model_str == "cond_vae":
+            match = re.search(r'n_experts(\d+)', model_rel_path)
+            num_experts = int(match.group(1))
             if self_supervised:
-                model = CondVAE(in_channels=4, out_channels=1, gf_dim=8, num_experts=3)
+                model = CondVAE(in_channels=4, out_channels=1, gf_dim=8, num_experts=num_experts)
             else:
-                model = CondVAE(in_channels=4, out_channels=4, gf_dim=8, num_experts=3)
+                model = CondVAE(in_channels=4, out_channels=4, gf_dim=8, num_experts=num_experts)
         else:
             raise ValueError("Model not recognized")
         
@@ -679,6 +809,7 @@ if __name__ == '__main__':
         
         model.load_state_dict(torch.load(best_model_path, map_location=device))
         model.to(device)
+        model.eval()
         
         
         results_dir = os.path.join(project_code_root,'Results/Evaluation/' + model_str + '/' + preprocess_method + '/' + model_name)
@@ -725,8 +856,8 @@ if __name__ == '__main__':
 
 
         if "validation" in data_to_visualize:
-            # We have 7 patients in the validation set with 7 deformations and 64 slices each
-            #That means we have 49 patients in total 
+            # We have 7 patients in the validation set with 7 (or less) deformations and 64 slices each
+            
             n_def = len(deformation_list_validation_set)
 
             n_val_patients = 7
@@ -742,8 +873,11 @@ if __name__ == '__main__':
                     logging.info(f"******Deformation: {deformation_list_validation_set[i//n_val_patients]} ******")
                 results_dir_def = os.path.join(results_dir_val, deformation_list_validation_set[i//n_val_patients])
                 make_dir_safely(results_dir_def)
-                images_def = images_vl[i*spatial_size_z:(i+1)*spatial_size_z]
-                labels_def = labels_vl[i*spatial_size_z:(i+1)*spatial_size_z]
+                
+                #images_def = images_vl[i*spatial_size_z:(i+1)*spatial_size_z]
+                #labels_def = labels_vl[i*spatial_size_z:(i+1)*spatial_size_z]
+                images_def = images_vl[validation_indexes[i*spatial_size_z:(i+1)*spatial_size_z]]
+                labels_def = labels_vl[validation_indexes[i*spatial_size_z:(i+1)*spatial_size_z]]
                 start_idx = 0
                 end_idx = batch_size
                 subject_anomaly_score = []
@@ -758,7 +892,7 @@ if __name__ == '__main__':
                     labels = torch.from_numpy(labels).transpose(1,4).transpose(2,4).transpose(3,4).float().to(device)
                     batch_z_slice = torch.from_numpy(np.arange(start_idx, end_idx)).float().to(device)
                     with torch.no_grad():
-                        
+                        model.eval()
                         
                         input_dict = {'input_images': batch, 'batch_z_slice':batch_z_slice}
                         output_dict = model(input_dict)
@@ -823,16 +957,14 @@ if __name__ == '__main__':
                 validation_metrics(all_anomaly_scores_def, all_masks_def, deformation)
 
 
-        # Apply deformations and visualize healthy unseen
-        if "healthy_unseen" in data_to_visualize:
-            logging.info("Visualizing healthy unseen data...")
-            results_dir_val_unseen = results_dir + '/' + 'healthy_unseen'
-            make_dir_safely(results_dir_val_unseen)
-            apply_deformation(deformation_list, images_healthy_unseen, save_dir = results_dir_val_unseen, actions = actions )
-
         # Visualize the predictions on the test set (no artificial deformations)
         # Some are healthy and some are anomalous
         if "test" in data_to_visualize:
+            # Create another log file specifically for test
+            log_file = os.path.join(results_dir, 'log_test.txt')
+            condition_handler = logging.FileHandler(log_file)
+            condition_handler.setLevel(logging.INFO)
+            logger.addHandler(condition_handler)
             healthy_scores = []
             healthy_idx = 0
             anomalous_scores = []
@@ -860,6 +992,7 @@ if __name__ == '__main__':
                     batch_z_slice = torch.from_numpy(np.arange(start_idx, end_idx)).float().to(device)
                     batch = torch.from_numpy(batch).transpose(1,4).transpose(2,4).transpose(3,4).float().to(device)
                     with torch.no_grad():
+                        model.eval()
                         
                         input_dict = {'input_images': batch, 'batch_z_slice':batch_z_slice}
                         output_dict = model(input_dict)
@@ -921,7 +1054,16 @@ if __name__ == '__main__':
                         lowest_anomaly_score_anomalous_subject_dataset = subject_idx
                         output_lowest_anomaly_score_anomalous_subject = np.concatenate(subject_anomaly_score)
                     anomalous_idx += 1
+                
                 logging.info('{}_subject {} anomaly_score: {:.4e} +/- {:.4e}'.format(legend, subject_idx, np.mean(subject_anomaly_score), np.std(subject_anomaly_score)))
+                # Save the anomaly scores for the subject if it does not exist
+                results_dir_subject = os.path.join(results_dir_test, "outputs")
+                make_dir_safely(results_dir_subject)
+                file_path = os.path.join(results_dir_subject, f'{test_subjects_dict[subject_idx]}_anomaly_scores.npy')
+                # Check if the file_path exists else save it
+                if not os.path.exists(file_path):
+                    np.save(file_path, np.concatenate(subject_anomaly_score))
+                # End of subject
             # End of data set
             healthy_scores = np.array(healthy_scores)
             anomalous_scores = np.array(anomalous_scores)
@@ -941,9 +1083,9 @@ if __name__ == '__main__':
             compute_auc(healthy_scores, anomalous_scores, format_wise= "patient_wise", agg_function=np.mean)
             compute_auc(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function=np.mean)
             compute_auc(healthy_scores, anomalous_scores, format_wise= "2Dslice", agg_function=np.mean)
-            #compute_auc(healthy_scores, anomalous_scores, format_wise= "patient_wise", agg_function=np.sum)
-            #compute_auc(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function=np.sum)
-            #compute_auc(healthy_scores, anomalous_scores, format_wise= "2Dslice", agg_function=np.sum)
+            
+            
+            
             logging.info('============================================================')
             # Compute average Precision
             logging.info('============================================================')
@@ -952,9 +1094,9 @@ if __name__ == '__main__':
             compute_average_precision(healthy_scores, anomalous_scores, format_wise= "patient_wise", agg_function= np.mean)
             compute_average_precision(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function= np.mean)
             compute_average_precision(healthy_scores, anomalous_scores, format_wise= "2Dslice", agg_function= np.mean)
-            #compute_average_precision(healthy_scores, anomalous_scores, format_wise= "patient_wise", agg_function= np.sum)
-            #compute_average_precision(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function= np.sum)
-            #compute_average_precision(healthy_scores, anomalous_scores, format_wise= "2Dslice", agg_function= np.sum)
+            
+            
+            
             logging.info('============================================================')
             # Plot the scores
             logging.info('============================================================')
@@ -994,7 +1136,15 @@ if __name__ == '__main__':
             # Function to plot
             save_dir_test_images = os.path.join(project_code_root, results_dir, 'thesis_plots')
             plot_slices(images_dict = images_dict, most_separable_patients_z_slices = most_separable_patients_z_slices, least_separable_patients_z_slices = least_separable_patients_z_slices, save_dir_test_images = save_dir_test_images, time_steps = 1)
+            plot_slices(images_dict = images_dict, most_separable_patients_z_slices = most_separable_patients_z_slices, least_separable_patients_z_slices = least_separable_patients_z_slices, save_dir_test_images = save_dir_test_images, time_steps = 15)
 
+            # Do statistical tests 
+            logging.info('============================================================')
+            logging.info('Doing statistical tests...')
+            logging.info('============================================================')
+            # With subject means
+            logging.info('Patient wise \n')
+            statistical_tests(healthy_scores.mean(axis=(1,2,3,4,5)), anomalous_scores.mean(axis=(1,2,3,4,5)))
             # With sum instead of mean
             #plot_scores(healthy_scores, anomalous_scores, level = 'patient', agg_function= np.sum)        
             #plot_scores(healthy_scores, anomalous_scores, level = 'imagewise', agg_function= np.sum)
@@ -1003,4 +1153,7 @@ if __name__ == '__main__':
             logging.info('============================================================')
             logging.info('Logging finished')
             # remove the handler when you're done logging
-            logger.removeHandler(handler)
+            logger.removeHandler(condition_handler)
+        logger.removeHandler(handler)
+            
+            
