@@ -60,17 +60,26 @@ def extract_slice_from_sitk_image(sitk_image, point, Z, X, new_size, fill_value=
     resample_filter.SetDefaultPixelValue(fill_value)
 
     resampled_sitk_image = resample_filter.Execute(sitk_image)
-    return resampled_sitk_image
+    output_dict = {}
+    output_dict['resampled_sitk_image'] = resampled_sitk_image
+    output_dict['transform'] = transform
+    output_dict['origin'] = resampled_sitk_image.GetOrigin()
+    return output_dict
 
 def interpolate_and_slice(image,
                           coords,
-                          size, smoothness=200):
+                          size, 
+                          smoothness=200):
 
 
+    # Now that I also want to return the geometries, I need to return a dictionary
+    slice_dict = {}
+    geometry_dict = {}
     #coords are a bit confusing in order...
     x = coords[:,0]
     y = coords[:,1]
     z = coords[:,2]
+
 
     coords = np.array([z,y,x]).transpose([1,0])
 
@@ -88,14 +97,20 @@ def interpolate_and_slice(image,
 
     slices = []
     for i in range(len(Zs)):
+        geometry_dict[f"slice_{i}"] = {}
         # I define the x'-vector as the projection of the y-vector onto the plane perpendicular to the spline
         xs = (direc - np.dot(direc, Zs[i]) / (np.power(np.linalg.norm(Zs[i]), 2)) * Zs[i])
-        sitk_slice = extract_slice_from_sitk_image(sitk_image, points[i], Zs[i], xs, list(size[:2]) + [1], fill_value=0)
+        output_dict = extract_slice_from_sitk_image(sitk_image, points[i], Zs[i], xs, list(size[:2]) + [1], fill_value=0)
+        sitk_slice = output_dict['resampled_sitk_image']
+        geometry_dict[f"slice_{i}"]['transform'] = output_dict['transform']
+        geometry_dict[f"slice_{i}"]['origin'] = output_dict['origin']
         np_image = sitk.GetArrayFromImage(sitk_slice).transpose(2, 1, 0)
         slices.append(np_image)
 
     # stick slices together
-    return np.concatenate(slices, axis=2)
+    slice_dict['straightened'] = np.concatenate(slices, axis=2)
+    slice_dict['geometry_dict'] = geometry_dict
+    return slice_dict
 
 # FULL AORTA PROCESSING UTILS
 
@@ -355,6 +370,8 @@ def prepare_and_write_sliced_data_bern(basepath,
     # ==========================================
     # ==========================================
     
+    savepath_geometry = sys_config.project_code_root + 'data' + '/geometry_for_backtransformation'
+    make_dir_safely(savepath_geometry)
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
@@ -439,7 +456,7 @@ def prepare_and_write_sliced_data_bern(basepath,
         segmented = np.load(os.path.join(seg_path, patient))
         
         
-        image = normalize_image(image)
+        image = normalize_image_new(image)
 
         # Compute the centerline points of the skeleton
         if cnn_predictions:
@@ -483,11 +500,20 @@ def prepare_and_write_sliced_data_bern(basepath,
 
         # We create Slices across time and channels in a double for loop
         temp_for_channel_stacking = []
+        geometry_saved = False
         for channel in range(image.shape[4]):
 
             temp_for_time_stacking = []
             for t in range(image.shape[3]):
-                straightened = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+                if not geometry_saved:
+                    save_for_backtransformation = True
+                else:
+                    save_for_backtransformation = False
+                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+                if save_for_backtransformation:
+                    geometry_saved = True  
+                    geometry_dict = slice_dict['geometry_dict']
+                straightened = slice_dict['straightened']
                 temp_for_time_stacking.append(straightened)
 
             channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
@@ -496,6 +522,8 @@ def prepare_and_write_sliced_data_bern(basepath,
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
 
         image_out  = straightened
+        # Save the geometries for backtransformation with name of patient
+        np.save(savepath_geometry + '/' + patient.replace('seg',''), geometry_dict)
 
         # make all images of the same shape
         print("Image shape before cropping and padding:" + str(image_out.shape))
@@ -586,6 +614,9 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 
     # ==========================================
     # ==========================================
+
+    savepath_geometry = sys_config.project_code_root + 'data' + '/geometry_for_backtransformation'
+    make_dir_safely(savepath_geometry)
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
@@ -723,11 +754,20 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 
         # We create Slices across time and channels in a double for loop
         temp_for_channel_stacking = []
+        geometry_saved = False
         for channel in range(image.shape[4]):
 
             temp_for_time_stacking = []
             for t in range(image.shape[3]):
-                straightened = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+                if not geometry_saved:
+                    save_for_backtransformation = True
+                else:
+                    save_for_backtransformation = False
+                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+                if save_for_backtransformation:
+                    geometry_saved = True  
+                    geometry_dict = slice_dict['geometry_dict']
+                straightened = slice_dict['straightened']
                 temp_for_time_stacking.append(straightened)
 
             channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
@@ -735,6 +775,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
         image_out = straightened
+        # Save the geometries for backtransformation with name of patient
+        np.save(savepath_geometry + '/' + patient.replace('seg_',''), geometry_dict)
 
         # make all images of the same shape
         print("Image shape before cropping and padding:" + str(image_out.shape))
@@ -774,7 +816,7 @@ def load_masked_data_sliced(basepath,
     # define file paths for images and labels
     # ==========================================
     savepath = sys_config.project_code_root + 'data'
-    dataset_filepath = savepath + f'/{train_test}_masked_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
+    dataset_filepath = savepath + f'/fake_delete_{train_test}_masked_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
         print('This configuration has not yet been preprocessed.')
@@ -820,7 +862,8 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
     
     # ==========================================
     # ==========================================
-    
+    savepath_geometry = sys_config.project_code_root + 'data' + '/geometry_for_backtransformation'
+    make_dir_safely(savepath_geometry)
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
@@ -947,11 +990,22 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
 
         # We create Slices across time and channels in a double for loop
         temp_for_channel_stacking = []
+        geometry_saved = False
         for channel in range(image.shape[4]):
 
             temp_for_time_stacking = []
             for t in range(image.shape[3]):
-                straightened = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape, smoothness=10)
+                if not geometry_saved:
+                    save_for_backtransformation = True
+                else:
+                    save_for_backtransformation = False
+
+                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape, smoothness=10)
+                if save_for_backtransformation:
+                    geometry_saved = True  
+                    geometry_dict = slice_dict['geometry_dict']
+                straightened = slice_dict['straightened']
+                
                 temp_for_time_stacking.append(straightened)
 
             channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
@@ -960,6 +1014,9 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
 
         image_out  = straightened
+        # Save the geometries for backtransformation with name of patient
+        np.save(savepath_geometry + '/' + patient.replace('seg',''), geometry_dict)
+
 
         # make all images of the same shape
         print("Image shape before cropping and padding:" + str(image_out.shape))
@@ -1050,7 +1107,8 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 
     # ==========================================
     # ==========================================
-
+    savepath_geometry = sys_config.project_code_root + 'data' + '/geometry_for_backtransformation'
+    make_dir_safely(savepath_geometry)
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
@@ -1125,7 +1183,8 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 
         # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
         time_steps = segmented_original.shape[3]
-        segmented = dilation(segmented_original[:,:,:,3], cube(6))
+        #segmented = dilation(segmented_original[:,:,:,3], cube(6))
+        segmented = dilation(segmented_original[:,:,:,3], cube(3))
 
         temp_for_stack = [segmented for i in range(time_steps)]
         segmented = np.stack(temp_for_stack, axis=3)
@@ -1181,11 +1240,21 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 
         # We create Slices across time and channels in a double for loop
         temp_for_channel_stacking = []
+        geometry_saved = False
         for channel in range(image.shape[4]):
 
             temp_for_time_stacking = []
             for t in range(image.shape[3]):
-                straightened = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape, smoothness=10)
+                if not geometry_saved:
+                    save_for_backtransformation = True
+                else:
+                    save_for_backtransformation = False
+                    
+                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape,save_for_backtransformation, smoothness=10)
+                if save_for_backtransformation:
+                    geometry_saved = True  
+                    geometry_dict = slice_dict['geometry_dict']
+                straightened = slice_dict['straightened']
                 temp_for_time_stacking.append(straightened)
 
             channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
@@ -1193,6 +1262,12 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
         image_out = straightened
+
+        # Save the geometries for backtransformation with name of patient
+        np.save(savepath_geometry + '/' + patient.replace('seg',''), geometry_dict)
+            
+
+
 
         # make all images of the same shape
         print("Image shape before cropping and padding:" + str(image_out.shape))
@@ -1265,13 +1340,13 @@ if __name__ == '__main__':
     #masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
     
 
-    #sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
-    #sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')
-    #sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=20, train_test='test')
+    #sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', force_overwrite=True)
+    #sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', force_overwrite=True)
+    #sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', force_overwrite=True)
     
     #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')    
-    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', force_overwrite= True)
+    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
 
     #sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
     #sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
@@ -1279,7 +1354,7 @@ if __name__ == '__main__':
     
     #masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
     #masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
-    #masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=False)
+    #masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=34, train_test='test', force_overwrite=False)
 
     
     
