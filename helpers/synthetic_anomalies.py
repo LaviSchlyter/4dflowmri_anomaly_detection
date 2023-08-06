@@ -517,6 +517,11 @@ def load_create_syntetic_data(data,
                         force_overwrite=False,
                         note = '',
                         ):
+    # if preprocessing method contains full_aorta, then z_slices = 256 else 64
+    if 'full_aorta' in preprocessing_method:
+        z_slices = 256
+    else:
+        z_slices = 64
     savepath= sys_config.project_code_root + "data"
     make_dir_safely(savepath)
     if note != '':
@@ -531,7 +536,8 @@ def load_create_syntetic_data(data,
         prepare_and_write_synthetic_data(
                                 data = data,
                                 deformation_list = deformation_list,
-                                filepath_output = dataset_filepath
+                                filepath_output = dataset_filepath,
+                                z_slices= z_slices
                                 )
         
         print('Preprocessing done.')
@@ -546,14 +552,14 @@ if __name__ == '__main__':
     #%%
     # Type of deformation
     # 'None', 'noisy', 'deformation', 'hollow circle', 'patch', 'all'
-    #deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-    deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+    deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+    #deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
     deformation_type = 'all'
 
     # Set config
     config = dict()
     # 'None', 'mask', 'slice', 'masked_slice', 'sliced_full_aorta', 'masked_sliced_full_aorta', 'mock_square'
-    config['preprocess_method'] = 'masked_slice' 
+    config['preprocess_method'] = 'sliced_full_aorta' 
 
     # Load the validation data on which we apply the synthetic anomalies
     _, images_vl, _ = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 35, idx_end_vl = 42, idx_start_ts = 0, idx_end_ts = 2)
@@ -564,8 +570,10 @@ if __name__ == '__main__':
                         preprocessing_method = config['preprocess_method'],
                         idx_start = 35,
                         idx_end = 42,
-                        force_overwrite=False,
-                        note = 'without_noise_cube_3')
+                        force_overwrite=True,
+                        note = 'decreased_interpolation_factor_cube_3')
+    
+    # decreased_interpolation_factor_cube_3
     
 
 
