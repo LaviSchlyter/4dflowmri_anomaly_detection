@@ -1,4 +1,7 @@
+#%%
 import torch
+import numpy as np 
+from scipy.special import eval_genlaguerre as L
 
 def l2loss(x, y):
     """
@@ -7,8 +10,7 @@ def l2loss(x, y):
     :param y: output of the network
     :result: L2 Loss
     """
-    averaged = torch.mean((x - y)**2, dim=(1, 2, 3, 4))
-    l2_loss = averaged
+    l2_loss = torch.mean((x - y)**2, dim=(1, 2, 3, 4))
     return l2_loss
 
 

@@ -1,9 +1,10 @@
 #note: 'cut_out'
 #note: 'test_save_viz'
-note: 'poisson_mix_training' 
-#note: '' #poisson_mix_training
+#note: 'with_interpolation_training'
+#note: 'poisson_mix_training' 
+note: '_SEED_25' #poisson_mix_training
 synthetic_data_note: 'decreased_interpolation_factor_cube_3' # This is when loading the synthetic data, if we want to load a specific one
-#'' or 'decreased_interpolation_factor' or 'without_noise'
+#'' or 'without_noise_cube_3' or 'decreased_interpolation_factor' or 'without_noise' or 'decreased_interpolation_factor_cube_3'
 # =================================== TRAINING SETTINGS ===================================
 batch_size: 8
 #init_batches: 64 # Not used
@@ -27,11 +28,12 @@ max_grad_norm: None
 gf_dim: 8
 
 
-lr: 1.5e-3
+#lr: 1.5e-3
+lr: 1.0e-3
 
 
 do_data_augmentation: False
-use_scheduler: True
+use_scheduler: False
 gen_loss_factor: 100 # How much more the reconstruction loss is weighted 
 
 # Self-supervised method
@@ -66,7 +68,7 @@ idx_end_vl: 42
 ## 1792, 2240: poisson_wo_mixing
 ## 1344, 2240: Remove all poisson (with and without mixing)
 
-indices_to_remove: [2240, 2688] # DOUBLE CHECK (also in utils.py)
+indices_to_remove: [2240, 3136] # DOUBLE CHECK (also in utils.py)
 
 # Metrics to use saving best model (all are always saved/computed)
 val_metric: "AP" # AP, auc_roc

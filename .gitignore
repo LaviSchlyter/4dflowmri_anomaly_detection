@@ -172,4 +172,6 @@ sbatch_log/*
 *.npy
 # txt files
 *.txt
+# vtk files
+*.vtk
 

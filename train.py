@@ -13,7 +13,7 @@ import datetime
 from config import system as config_sys
 import wandb
 import math
-
+from pytorch_model_summary import summary
 
 # =================================================================================
 # ============== IMPORT HELPER FUNCTIONS ===========================================
@@ -26,7 +26,12 @@ from helpers.run import train, load_model, evaluate
 from helpers.data_loader import load_data, load_syntetic_data
 
 
-
+SEED = 25
+torch.manual_seed(SEED)
+np.random.seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 
 # =================================================================================
@@ -35,8 +40,6 @@ from helpers.data_loader import load_data, load_syntetic_data
 
 from models.vae import VAE, VAE_linear, VAE_convT
 from models.condconv import CondVAE, CondConv
-from models.tilted_vae import TiltedVAE
-from models.mmd_vae import MMDVAE
 
 # =================================================================================
 # ============== MAIN FUNCTION ==================================================
@@ -51,8 +54,6 @@ if __name__ ==  "__main__":
     parser.add_argument('--config_path', type=str, required= True, help='Path to the config file.')
     parser.add_argument('--checkpoint', type=str, default="logs", help='Path to the checkpoint file to restore.')
     parser.add_argument('--continue_training', type=bool, help='Continue training from checkpoint.')
-    #parser.add_argument('--train', type=str)
-    #parser.add_argument('--val', type=str)
     parser.add_argument('--preprocess_method', type=str)
     # Adding the next ones to enable parameter sweeps but they are defined in the yaml file
     parser.add_argument('--epochs', type=int)
@@ -120,10 +121,10 @@ if __name__ ==  "__main__":
         tag = 'reconstruction'
 
     if config['use_synthetic_validation']:
-        tags = [config['model'], 'synthetic_validation', 'real_run1', config['validation_metric_format']]
+        tags = [config['model'], 'synthetic_validation', 'various_SEED', config['validation_metric_format']]
         tags.append(tag)
     else:
-        tags = [config['model'], 'real_run1']
+        tags = [config['model'], 'various_SEED']
         tags.append(tag)
     with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
         config = wandb.config
@@ -201,7 +202,21 @@ if __name__ ==  "__main__":
             already_completed_epochs = config['latest_model_epoch']
         else:
             already_completed_epochs = 0
-
+        # ================================================
+        # Print summary of the model
+        # ================================================
+        logging.info('=======================================================')
+        logging.info('Details of the model architecture')
+        logging.info('=======================================================')
+    
+        input_dict= {'input_images': torch.zeros((1, 4, 32, 32, 24)).to(device).float(), 'batch_z_slice': torch.zeros((1,)).to(device).float(), 'adjacent_batch_slices':torch.zeros((1, 12, 32, 32, 24)).to(device)}
+        logging.info(summary(model, input_dict, show_input=False))
+        
+        
+        
+        
+        
+        
         # Train 
         optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'], betas=(config['beta1'], config['beta2']))
         train(model, images_tr, images_vl, log_dir, already_completed_epochs, config, device, optimizer)

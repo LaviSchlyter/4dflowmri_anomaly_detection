@@ -10,10 +10,6 @@ from matplotlib import pyplot as plt
 
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-SEED = 0 
-torch.manual_seed(SEED)
-np.random.seed(SEED)
-torch.cuda.manual_seed_all(0)
 
 # =================================================================================
 # ============== HELPER FUNCTIONS =============================================
@@ -313,7 +309,6 @@ def train(model: torch.nn.Module,
         number_of_batches = 0
         # Set y to None
         y = None
-        
         
 
         for nt, batch in enumerate(iterate_minibatches(images_tr, config, data_augmentation=config['do_data_augmentation'])):
