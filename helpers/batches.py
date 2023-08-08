@@ -5,7 +5,6 @@ from data_augmentation import do_data_augmentation
 import math
 
 from matplotlib import pyplot as plt
-
 def iterate_minibatches(data,
                     config,
                     data_augmentation=False,
@@ -52,6 +51,10 @@ def iterate_minibatches(data,
 
     batch_size = config['batch_size']
 
+
+    # add a new configuration check
+    get_neighbours = config.get('get_neighbours', False)
+
     # ===========================
     # using only a fraction of the batches in each epoch
     # ===========================
@@ -62,6 +65,138 @@ def iterate_minibatches(data,
 
         # HDF5 requires indices to be in increasing order
         batch_indices = np.sort(random_indices[b_i:b_i+batch_size])
+
+        if get_neighbours:
+            extended_batch_indices = []
+            for idx in batch_indices:
+                patient_num = idx//64
+                slice_num = idx % 64
+                prev_idx = (patient_num * 64 + max(0, slice_num - 1)) if slice_num != 0 else None
+                next_idx = (patient_num * 64 + min(63, slice_num + 1)) if slice_num != 63 else None
+
+                extended_batch_indices.append((images[prev_idx] if prev_idx is not None else np.zeros_like(images[0]),
+                                           images[idx], 
+                                           images[next_idx] if next_idx is not None else np.zeros_like(images[0])))
+        
+                
+                
+            
+            X = np.stack([idx_tuple for idx_tuple in extended_batch_indices], axis=0)
+            
+            if with_labels:
+                #Y = np.stack([idx_tuple for idx_tuple in extended_batch_indices], axis=0)
+                Y = labels[batch_indices, ...]
+
+        else:
+            X = images[batch_indices, ...]
+            if with_labels:
+                Y = labels[batch_indices, ...]
+                
+        
+
+        # ===========================
+        # augment the batch
+        # ===========================
+        if data_augmentation:
+            X = do_data_augmentation(images=X,
+                                     data_aug_ratio=0.5, 
+                                     trans_min=-10,
+                                     trans_max=10,
+                                     rot_min=-10,
+                                     rot_max=10,
+                                     scale_min=0.9,
+                                     scale_max=1.1)
+            if with_labels:
+                # TODO: FIX: actually not because you don't do data augmentation on the validation (think again maybe you will on teh training )
+                Y = do_data_augmentation(images=Y,
+                                        data_aug_ratio=0.5,
+                                        trans_min=-10,
+                                        trans_max=10,
+                                        rot_min=-10,
+                                        rot_max=10,
+                                        scale_min=0.9,
+                                        scale_max=1.1)
+
+        
+
+                                     
+        yield (X, Y, batch_indices%config['spatial_size_z']) if with_labels else (X, batch_indices%config['spatial_size_z'])
+
+"""
+def iterate_minibatches(data,
+                    config,
+                    data_augmentation=False,
+                    with_labels=False,
+                    remove_indices = False,
+                    indices_to_remove = [],
+                    ):
+    '''
+    Author: Neerav Kharani, extended by Pol Peiffer
+    # Update TODO
+    Function to create mini batches from the dataset of a certain batch size
+    :param data: numpy dataset
+    :param labels: numpy dataset (same as images/volumes)
+    :param config: configuration files
+    :return: mini batches
+    '''
+
+    # ===========================
+    # generate indices to randomly select slices in each minibatch
+    # ===========================
+    if with_labels:
+        images = data['images']
+        labels = data['masks']
+
+    else:
+        images = data
+    n_images = images.shape[0]
+    if with_labels and remove_indices and len(indices_to_remove) == 2:
+        # In the case we use self-supervised learning, we remove some of the images
+        # Because they contain the same form of anomalies as the training 
+        # We remove the set indices within the list given by user
+        random_indices = set(np.arange(n_images))
+        indices_to_remove = set(np.arange(indices_to_remove[0], indices_to_remove[1]))
+        diff = random_indices - indices_to_remove
+        random_indices = np.array(list(diff))
+        n_images = n_images - len(indices_to_remove)
+
+        #n_images = n_images - 7*64*3
+        
+    else:
+        random_indices = np.arange(n_images)
+
+    np.random.shuffle(random_indices)
+
+    batch_size = config['batch_size']
+
+
+    # add a new configuration check
+    get_neighbours = config.get('get_neighbours', False)
+
+    # ===========================
+    # using only a fraction of the batches in each epoch
+    # ===========================
+    for b_i in range(0, n_images, batch_size):
+
+        if b_i + batch_size > n_images:
+            continue
+
+        # HDF5 requires indices to be in increasing order
+        batch_indices = np.sort(random_indices[b_i:b_i+batch_size])
+
+        if get_neighbours:
+            extended_batch_indices = []
+            for idx in batch_indices:
+                patient_num = idx//64
+                slice_num = idx % 64
+                prev_idx = (patient_num * 64 + max(0, slice_num - 1)) if slice_num != 0 else -1
+                next_idx = (patient_num * 64 + min(63, slice_num + 1)) if slice_num != 63 else -1
+
+                # if prev_idx or next_idx is -1, it means the corresponding slice doesn't exist
+                # so we pad with zero slice
+                extended_batch_indices.append((prev_idx if prev_idx != -1 else np.zeros_like(images[0]), idx, next_idx if next_idx != -1 else np.zeros_like(images[0])))
+
+            batch_indices = extended_batch_indices
 
         X = images[batch_indices, ...]
         if with_labels:
@@ -95,7 +230,7 @@ def iterate_minibatches(data,
                                      
         yield (X, Y, batch_indices%config['spatial_size_z']) if with_labels else (X, batch_indices%config['spatial_size_z'])
 
-
+"""
 # ============================================
 # Batch plotting helper functions
 # ============================================

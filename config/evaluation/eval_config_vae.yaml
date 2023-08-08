@@ -1,0 +1,69 @@
+# ============================= GENERAL SETTINGS ====================================
+# ==================================================================
+# project dirs
+# ==================================================================
+project_code_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/'
+project_data_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady'
+
+# ==================================================================
+# log root
+# ==================================================================
+log_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs/'
+
+
+# ============================= MODEL ====================================
+
+# Which model to load
+model_name: "20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100"
+model_directory: "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs/vae/masked_slice/20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100"
+latest_model_epoch: 760
+model: "vae"
+preprocess_method: "masked_slice"
+# Should we save the reconstructions in hdf5 file
+save_hdf5: False
+
+
+# ============================= NETWORK SETTINGS ====================================
+batch_size: 8
+
+spatial_size_x: 32
+spatial_size_y: 32
+spatial_size_z: 64
+spatial_size_t: 24
+
+lr: 5.0e-5
+config: 
+
+# Training data
+train_data_start_idx: 0
+train_data_end_idx: 5
+
+# Validation data
+validation_data_start_idx: 42
+validation_data_end_idx: 44
+
+# Testing data
+test_data_start_idx: 0
+test_data_end_idx: 2
+
+# Synthetic data
+synthetic_data_start_idx: 42
+synthetic_data_end_idx: 44
+
+# Evaluation on which datasets
+which_datasets: [ 'validation', 'noisy', 'deformation'] # 'train', 'validation', 'test', 'noisy', 'deformation'
+
+# Which subjects from each dataset,
+# default is all subjects, custom will pick subjects from array
+subject_mode: 'all' #set to custom and choose below
+subjects_train: []
+subjects_validation: []
+subjects_test: []
+
+# Which slices, default is evaluated for all slices, custom will pick slices
+slice_mode: 'all' #set to custom and choose below, this is currently not a finished feature as of 10/02/2020
+which_slices: []
+
+visualization_mode: 'all' #set to custom and choose below
+
+compute_roc_auc: True
