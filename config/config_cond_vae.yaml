@@ -3,11 +3,12 @@
 note: '_SEED_25'
 #note: ''
 #note: '' #'poisson_mix_training'
-synthetic_data_note: 'decreased_interpolation_factor_cube_3' # This is when loading the synthetic data, if we want to load a specific one
+# This is when loading the synthetic data, if we want to load a specific one
+synthetic_data_note: 'decreased_interpolation_factor_cube_3' 
 #'' or 'decreased_interpolation_factor' or 'without_noise'
 # =================================== TRAINING SETTINGS ===================================
 batch_size: 8
-#init_batches: 64 # Not used
+
 n_experts: 3
 
 spatial_size_x: 32
@@ -25,30 +26,21 @@ beta2: 0.999
 # Gradient clipping
 max_grad_norm: None
 
-
-
-# This does not influence !
-#z_dim: 3072
-# This does but it is not directly the z_dim
+# Factor for dimensions in the latent space
 gf_dim: 8
 
-#lr: 5.0e-5
 lr: 1.0e-3
-# lr_decay_begin: 100 # Not used
-#lr_decay_end: 200 # This is the epoch number
-# log_freq: 250 
-# ckpt_freq: 1000
-# test_freq: 1000
-# drop_prob: 0.1
 
 do_data_augmentation: False
 use_scheduler: False
-gen_loss_factor: 100 # How much more the reconstruction loss is weighted 
+# How much more the reconstruction loss is weighted 
+gen_loss_factor: 100 
 
 z_dim: 2048
 
 # Self-supervised method
-self_supervised: True # Then use_synthetic_validation must be True
+# Then use_synthetic_validation must be True
+self_supervised: True 
 # =================================== DATA SETTINGS ===================================
 # Use synthetic data for validation
 use_synthetic_validation: True
@@ -99,7 +91,7 @@ model_directory : 'logs/vae_convT/masked_slice/20230627-1759_vae_convT_masked_sl
 model_name : #20230627-1759_vae_convT_masked_slice_lr1.000e-03-e800-bs8-gf_dim8-daFalse-f100
 latest_model_epoch : 355
 
-model: # Should I complete this ? 
+model: 
 checkpoint:
 continue_training: False
 preprocess_method: 

@@ -13,7 +13,8 @@ list_of_best_experiments_run1 = ["vae_convT/masked_slice/20230719-1823_vae_convT
                                      "vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3",
                                      "cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
 
-list_of_experiments = list_of_best_experiments_run1
+list_of_experiments = ["vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3",
+                                     "cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
 
 # Main
 if __name__ == '__main__':
@@ -45,6 +46,10 @@ if __name__ == '__main__':
         for i, subject in enumerate(subjects):
 
             subject_name = subject.replace("_anomaly_scores", "")
+            # if already backtransformed, skip
+            if os.path.exists(os.path.join(save_path, subject_name)):
+                continue
+            
             print("Backtransforming subject: ", subject_name)
             # Load the anomaly scores
             anomaly_scores = np.load(os.path.join(anomaly_scores_paths, subject))

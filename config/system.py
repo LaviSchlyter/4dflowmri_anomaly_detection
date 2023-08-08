@@ -16,7 +16,6 @@ local_hostnames = ['biwidl203']
 # ==================================================================
 project_code_root = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/'
 project_data_root = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady'
-#orig_data_root = '/scratch_net/biwidl210/peifferp/thesis/freiburg_data/source_data'
 
 # ==================================================================
 # log root

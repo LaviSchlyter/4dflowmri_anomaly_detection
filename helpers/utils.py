@@ -8,7 +8,7 @@ import torch
 import sys
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
 import config.system as sys_config
-from helpers.loss_functions import l2loss, kl_loss_1d, kl_loss_tilted, compute_mmd
+from helpers.loss_functions import l2loss, kl_loss_1d
 # For the patch blending we import from another directory
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/git_repos/many-tasks-make-light-work')
 from multitask_method.tasks.patch_blending_task import \
@@ -19,9 +19,6 @@ from multitask_method.tasks.cutout_task import Cutout
 from multitask_method.tasks.patch_blending_task import TestCutPastePatchBlender
 from multitask_method.tasks.labelling import FlippedGaussianLabeller
 
-# For back transformation
-import SimpleITK as sitk
-from tvtk.api import tvtk, write_data
 
 
 
@@ -212,85 +209,6 @@ def compute_losses_VAE(input_images, output_dict, config):
     dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss,'gen_loss': gen_loss, 'res_loss': res_loss, 'lat_loss': lat_loss}
     return dict_loss
 
-
-def compute_losses_TVAE(input_images, output_dict, config):
-    
-    # Compute the reconstruction loss
-    gen_loss = l2loss(input_images, output_dict['decoder_output'])
-
-    # Compute the kld loss
-    kld_loss = kl_loss_tilted(output_dict['mu'], config['mu_star'])
-
-    # Factor loss
-    gen_factor_loss = config['gen_loss_factor']*gen_loss
-
-    # Total loss
-    loss = torch.mean(gen_factor_loss + kld_loss)
-
-    # Val loss
-    val_loss = torch.mean(gen_loss + kld_loss)
-
-    # Save the losses in a dictionary
-    dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss,'gen_loss': gen_loss, 'kld_loss': kld_loss}
-    return dict_loss
-
-def compute_losses_MMDVAE(input_images, output_dict, config, device, samples_to_generate=100):
-
-    # Compute the reconstruction loss
-    gen_loss = l2loss(input_images, output_dict['decoder_output'])
-
-    # Compute the MMD regularization loss
-    # Generate random samples following normal distribution
-    true_samples = torch.randn(samples_to_generate, 32*config['gf_dim'],2,2,3, device = device)
-    mmd_loss = compute_mmd(output_dict['z'], true_samples)
-
-    # Factor loss
-    gen_factor_loss = config['gen_loss_factor']*gen_loss
-
-    mmd_factor_loss = config['mmd_loss_factor']*mmd_loss
-
-    # Total loss
-    loss = torch.mean(gen_factor_loss + mmd_factor_loss)
-
-    # Val loss
-    val_loss = torch.mean(gen_loss + mmd_loss)
-
-    # Save the losses in a dictionary
-    dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss, 'mmd_factor_loss': mmd_factor_loss, 'gen_loss': gen_loss, 'mmd_loss': mmd_loss}
-    return dict_loss
-    
-
-
-
-
-
-# ==================================================================
-# ==================================================================
-
-
-# TVAE
-def kld(mu, tau, d):
-    # no need to include z, since we run gradient descent...
-    return -tau*np.sqrt(np.pi/2)*L(1/2, d/2 -1, -(mu**2)/2) + (mu**2)/2
-
-# convex optimization problem
-def kld_min(tau, d):
-    steps = [1e-1, 1e-2, 1e-3, 1e-4]
-    dx = 5e-3
-
-    # inital guess (very close to optimal value)
-    x = np.sqrt(max(tau**2 - d, 0))
-
-    # run gradient descent (kld is convex)
-    for step in steps:
-        for i in range(1000): # TODO update this to 10000
-            y1 = kld(x-dx/2, tau, d)
-            y2 = kld(x+dx/2, tau, d)
-
-            grad = (y2-y1)/dx
-            x -= grad*step
-
-    return x
 # ==========================================        
 # function to normalize the input arrays (intensity and velocity) to a range between 0 to 1.
 # magnitude normalization is a simple division by the largest value.

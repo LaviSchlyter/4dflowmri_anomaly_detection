@@ -166,3 +166,4 @@ def plot_batches_SSL_in_out(batch, Out_Mu,channel_to_show, every_x_time_step, ou
         plt.imsave(out_path, canvas, cmap = 'viridis')
     else:
         plt.imsave(out_path, canvas, cmap = 'gray')
+
