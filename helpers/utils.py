@@ -1,5 +1,7 @@
 import os 
 import timeit
+import SimpleITK as sitk
+from tvtk.api import tvtk, write_data
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
