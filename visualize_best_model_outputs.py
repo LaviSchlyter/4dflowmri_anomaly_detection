@@ -1,3 +1,4 @@
+#%%
 # In this file we evaluate the best model on the test set and visualize the results
 import numpy as np
 
@@ -22,7 +23,9 @@ import random
 
 from helpers.utils import make_dir_safely
 from config import system_eval as config_sys
+import config.system as sys_config
 from helpers.data_loader import load_data, load_syntetic_data
+basepath =  sys_config.project_data_root
 
 
 
@@ -147,7 +150,9 @@ if __name__ == '__main__':
 ]
     one_run = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100"]
 
-    list_of_experiments_paths = one_run
+    list_of_experiments_run2 = ['vae_convT/masked_slice/20230729-0153_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3']
+
+    list_of_experiments_paths = list_of_experiments_run2
 
     
 
@@ -175,13 +180,22 @@ if __name__ == '__main__':
 
     # We received new batch in July 2023, we added 14 subjects to the test data 9 control and 5 cases
     # if we select idx_end_ts =20 then we look at the first batch recevied with 7 cases and 13 controls\
+    
+    idx_start_ts = 0
     #idx_end_ts = 34
-    idx_end_ts = 34
+    idx_end_ts = 8
+    suffix = ''
+    compressed_sensing = True
+
+    if compressed_sensing:
+        suffix = '_compressed_sensing'
     
     # Please note the test labels are just a mask of ones for sick patients and zero for healthy
     
     
     deformation_list = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing'] 
+
+    """
     # Create dictionary to map the current test subjects to their ID
     test_subjects_dict = {0: "MACDAVD_201_", 1: "MACDAVD_202_", 2: "MACDAVD_203_", 3: "MACDAVD_301_", 4: "MACDAVD_302_", 5: "MACDAVD_303_", 6: "MACDAVD_304_",
                           7: "MACDAVD_125_", 8: "MACDAVD_127_", 9: "MACDAVD_129_", 10: "MACDAVD_131_", 11: "MACDAVD_133_", 12: "MACDAVD_139_", 13: "MACDAVD_141_",
@@ -189,6 +203,10 @@ if __name__ == '__main__':
                           21: "MACDAVD_208_", 22: "MACDAVD_209_", 23: "MACDAVD_311_", 24:"MACDAVD_404_", 25:"MACDAVD_156_", 26: "MACDAVD_157_", 27: "MACDAVD_158_",
                           28: "MACDAVD_159_", 29: "MACDAVD_160_", 30: "MACDAVD_161_",31: "MACDAVD_163_", 32: "MACDAVD_164_", 33: "MACDAVD_165_"}
 
+    if compressed_sensing:
+        test_subjects_dict = {0: "MACDAVD_204_", 1: "MACDAVD_205_", 2: "MACDAVD_305_", 3: "MACDAVD_306_", 4: "MACDAVD_307_", 5: "MACDAVD_308_", 6: "MACDAVD_309_",
+                          7: "MACDAVD_310_"}
+    """
     #noise_generator = generate_noise(batch_size = batch_size,mean_range = (0, 0.1), std_range = (0, 0.2), n_samples= images_healthy_unseen.shape[0]) 
 
     for model_rel_path in list_of_experiments_paths:
@@ -255,7 +273,21 @@ if __name__ == '__main__':
             logging.info(f"----------------------- USING INITIAL BATCH -----------------------")
 
         # Please note the test labels are just a mask of ones for sick patients and zero for healthy
-        _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_vl=35, idx_end_vl=42,idx_start_ts=0, idx_end_ts=idx_end_ts, with_test_labels= True)
+        _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_vl=35, idx_end_vl=42,idx_start_ts=idx_start_ts, idx_end_ts=idx_end_ts, with_test_labels= True, suffix = suffix)
+
+        # Create dictionary to map the current test subjects to their ID
+        seg_path = basepath + f'/final_segmentations/test{suffix}'
+        seg_path_files = os.listdir(seg_path)
+        seg_path_files.sort()
+        patients = seg_path_files[idx_start_ts:idx_end_ts]
+        # Remove string 'seg_' from the patient names 
+        patients = [patients.replace('seg_', '') for patients in patients]
+        patients = [patients.replace('.npy', '') for patients in patients]
+
+
+        test_subjects_dict = {i: patient for i, patient in enumerate(patients)}
+
+
 
         
 
@@ -423,7 +455,7 @@ if __name__ == '__main__':
                     # End of subject 
                     # Log subject mean and std anomaly score
                     
-                logging.info('Subject {} anomaly_score: {:.4e} +/- {:.4e}'.format(subject_idx,np.mean(np.concatenate(subject_anomaly_score)), np.std(np.concatenate(subject_anomaly_score))))
+                logging.info('Subject {} anomaly_score: {:.4e} +/- {:.4e}'.format(test_subjects_dict[subject_idx],np.mean(np.concatenate(subject_anomaly_score)), np.std(np.concatenate(subject_anomaly_score))))
 
 
                 # Save the input and output images for the subject
@@ -475,7 +507,7 @@ if __name__ == '__main__':
         # Some are healthy and some are anomalous
         if "test" in data_to_visualize:
             # Create another log file specifically for test
-            log_file = os.path.join(results_dir, 'log_test.txt')
+            log_file = os.path.join(results_dir, f'log_test{suffix}.txt')
             condition_handler = logging.FileHandler(log_file)
             condition_handler.setLevel(logging.INFO)
             logger.addHandler(condition_handler)
@@ -488,7 +520,7 @@ if __name__ == '__main__':
             highest_anomaly_score_anomalous = 0
             lowest_anomaly_score_healthy = 1e10
             
-            results_dir_test = results_dir + '/' + 'test'
+            results_dir_test = results_dir + '/' + f'test{suffix}'
             make_dir_safely(results_dir_test)
             # We want to separate by subject
             
@@ -546,7 +578,7 @@ if __name__ == '__main__':
                             #labels = labels*np.ones_like(output_images)
                             batch = batch.transpose(1,2).transpose(2,3).transpose(3,4).cpu().detach().numpy()
 
-                            plot_batches_SSL_in_out(batch, output_images, channel_to_show = 1,every_x_time_step=1, out_path=os.path.join(results_dir_test, '{}_subject_{}_batch_{}_to_{}.png'.format(legend, subject_idx, start_idx, end_idx)))
+                            plot_batches_SSL_in_out(batch, output_images, channel_to_show = 1,every_x_time_step=1, out_path=os.path.join(results_dir_test, '{}_subject_{}_batch_{}_to_{}.png'.format(legend, test_subjects_dict[subject_idx], start_idx, end_idx)))
                     start_idx += batch_size
                     end_idx += batch_size
                 if legend == "healthy":
@@ -583,7 +615,7 @@ if __name__ == '__main__':
                         output_lowest_anomaly_score_anomalous_subject = np.concatenate(subject_anomaly_score)
                     anomalous_idx += 1
                 
-                logging.info('{}_subject {} anomaly_score: {:.4e} +/- {:.4e}'.format(legend, subject_idx, np.mean(subject_anomaly_score), np.std(subject_anomaly_score)))
+                logging.info('{}_subject {} anomaly_score: {:.4e} +/- {:.4e}'.format(legend, test_subjects_dict[subject_idx], np.mean(subject_anomaly_score), np.std(subject_anomaly_score)))
                 # Save the anomaly scores for the subject if it does not exist
                 results_dir_subject = os.path.join(results_dir_test, "outputs")
                 inputs_dir_subject = os.path.join(results_dir_test, "inputs")
@@ -607,13 +639,26 @@ if __name__ == '__main__':
                 np.save(file_path_input, subject_sliced)
                 # End of subject
             # End of data set
+
+            # Check if healthy_scores list is empty
+            if len(healthy_scores) == 0:
+                # Add a dummy array
+                healthy_scores.append(np.zeros_like(output_highest_anomaly_score_anomalous_subject)) 
+                lowest_anomaly_score_healthy_subject = 0
+                highest_anomaly_score_healthy_subject = 0
+                lowest_anomaly_score_healthy_subject_dataset = 0
+                highest_anomaly_score_healthy_subject_dataset = 0
+                output_lowest_anomaly_score_healthy_subject = 0
+                output_highest_anomaly_score_healthy_subject = 0
+
             healthy_scores = np.array(healthy_scores)
-            anomalous_scores = np.array(anomalous_scores)
-            
             healthy_mean_anomaly_score = np.mean(healthy_scores)
             healthy_std_anomaly_score = np.std(healthy_scores)
+
+            anomalous_scores = np.array(anomalous_scores)
             anomalous_mean_anomaly_score = np.mean(anomalous_scores)
             anomalous_std_anomaly_score = np.std(anomalous_scores)
+            
             logging.info('============================================================')
             logging.info('Control subjects anomaly_score: {} +/- {:.4e}'.format(healthy_mean_anomaly_score, healthy_std_anomaly_score))
             logging.info('Anomalous subjects anomaly_score: {} +/- {:.4e}'.format(anomalous_mean_anomaly_score, anomalous_std_anomaly_score))
@@ -655,41 +700,42 @@ if __name__ == '__main__':
                 logging.info('============================================================')
                 logging.info('Plotting z slices from the most separable patients...')
                 logging.info('============================================================')
-                image_highest_anomaly_score_anomalous_subject = images_test[highest_anomaly_score_anomalous_subject_dataset*spatial_size_z:(highest_anomaly_score_anomalous_subject_dataset+1)*spatial_size_z]
-                image_lowest_anomaly_score_healthy_subject = images_test[lowest_anomaly_score_healthy_subject_dataset*spatial_size_z:(lowest_anomaly_score_healthy_subject_dataset+1)*spatial_size_z]
-                image_lowest_anomaly_score_anomalous_subject = images_test[lowest_anomaly_score_anomalous_subject_dataset*spatial_size_z:(lowest_anomaly_score_anomalous_subject_dataset+1)*spatial_size_z]
-                image_highest_anomaly_score_healthy_subject = images_test[highest_anomaly_score_healthy_subject_dataset*spatial_size_z:(highest_anomaly_score_healthy_subject_dataset+1)*spatial_size_z]
-                # Put everything in a a dictionary
-                images_dict = {'image_highest_anomaly_score_anomalous_subject': image_highest_anomaly_score_anomalous_subject,
-                                'image_lowest_anomaly_score_healthy_subject': image_lowest_anomaly_score_healthy_subject,
-                                'image_lowest_anomaly_score_anomalous_subject': image_lowest_anomaly_score_anomalous_subject,
-                                'image_highest_anomaly_score_healthy_subject': image_highest_anomaly_score_healthy_subject,
-                                'highest_anomaly_score_anomalous_subject': highest_anomaly_score_anomalous_subject,
-                                'lowest_anomaly_score_healthy_subject': lowest_anomaly_score_healthy_subject,
-                                'lowest_anomaly_score_anomalous_subject': lowest_anomaly_score_anomalous_subject,
-                                'highest_anomaly_score_healthy_subject': highest_anomaly_score_healthy_subject,
-                                'output_highest_anomaly_score_anomalous_subject': output_highest_anomaly_score_anomalous_subject,
-                                'output_lowest_anomaly_score_healthy_subject': output_lowest_anomaly_score_healthy_subject,
-                                'output_lowest_anomaly_score_anomalous_subject': output_lowest_anomaly_score_anomalous_subject,
-                                'output_highest_anomaly_score_healthy_subject': output_highest_anomaly_score_healthy_subject}
-                
-                
-                # Function to plot
-                save_dir_test_images = os.path.join(project_code_root, results_dir, 'thesis_plots')
-                plot_slices(images_dict = images_dict, most_separable_patients_z_slices = most_separable_patients_z_slices, least_separable_patients_z_slices = least_separable_patients_z_slices, save_dir_test_images = save_dir_test_images, time_steps = 1)
-                plot_slices(images_dict = images_dict, most_separable_patients_z_slices = most_separable_patients_z_slices, least_separable_patients_z_slices = least_separable_patients_z_slices, save_dir_test_images = save_dir_test_images, time_steps = 15)
+                if not compressed_sensing:
+                    image_highest_anomaly_score_anomalous_subject = images_test[highest_anomaly_score_anomalous_subject_dataset*spatial_size_z:(highest_anomaly_score_anomalous_subject_dataset+1)*spatial_size_z]
+                    image_lowest_anomaly_score_healthy_subject = images_test[lowest_anomaly_score_healthy_subject_dataset*spatial_size_z:(lowest_anomaly_score_healthy_subject_dataset+1)*spatial_size_z]
+                    image_lowest_anomaly_score_anomalous_subject = images_test[lowest_anomaly_score_anomalous_subject_dataset*spatial_size_z:(lowest_anomaly_score_anomalous_subject_dataset+1)*spatial_size_z]
+                    image_highest_anomaly_score_healthy_subject = images_test[highest_anomaly_score_healthy_subject_dataset*spatial_size_z:(highest_anomaly_score_healthy_subject_dataset+1)*spatial_size_z]
+                    # Put everything in a a dictionary
+                    images_dict = {'image_highest_anomaly_score_anomalous_subject': image_highest_anomaly_score_anomalous_subject,
+                                    'image_lowest_anomaly_score_healthy_subject': image_lowest_anomaly_score_healthy_subject,
+                                    'image_lowest_anomaly_score_anomalous_subject': image_lowest_anomaly_score_anomalous_subject,
+                                    'image_highest_anomaly_score_healthy_subject': image_highest_anomaly_score_healthy_subject,
+                                    'highest_anomaly_score_anomalous_subject': highest_anomaly_score_anomalous_subject,
+                                    'lowest_anomaly_score_healthy_subject': lowest_anomaly_score_healthy_subject,
+                                    'lowest_anomaly_score_anomalous_subject': lowest_anomaly_score_anomalous_subject,
+                                    'highest_anomaly_score_healthy_subject': highest_anomaly_score_healthy_subject,
+                                    'output_highest_anomaly_score_anomalous_subject': output_highest_anomaly_score_anomalous_subject,
+                                    'output_lowest_anomaly_score_healthy_subject': output_lowest_anomaly_score_healthy_subject,
+                                    'output_lowest_anomaly_score_anomalous_subject': output_lowest_anomaly_score_anomalous_subject,
+                                    'output_highest_anomaly_score_healthy_subject': output_highest_anomaly_score_healthy_subject}
+                    
+                    
+                    # Function to plot
+                    save_dir_test_images = os.path.join(project_code_root, results_dir, 'thesis_plots')
+                    plot_slices(images_dict = images_dict, most_separable_patients_z_slices = most_separable_patients_z_slices, least_separable_patients_z_slices = least_separable_patients_z_slices, save_dir_test_images = save_dir_test_images, time_steps = 1)
+                    plot_slices(images_dict = images_dict, most_separable_patients_z_slices = most_separable_patients_z_slices, least_separable_patients_z_slices = least_separable_patients_z_slices, save_dir_test_images = save_dir_test_images, time_steps = 15)
 
-                # Do statistical tests 
-                logging.info('============================================================')
-                logging.info('Doing statistical tests...')
-                logging.info('============================================================')
-                # With subject means
-                logging.info('Patient wise \n')
-                statistical_tests(healthy_scores.mean(axis=(1,2,3,4,5)), anomalous_scores.mean(axis=(1,2,3,4,5)))
-                logging.info('============================================================')
-                # Finish logging
-                logging.info('============================================================')
-                logging.info('Logging finished')
+                    # Do statistical tests 
+                    logging.info('============================================================')
+                    logging.info('Doing statistical tests...')
+                    logging.info('============================================================')
+                    # With subject means
+                    logging.info('Patient wise \n')
+                    statistical_tests(healthy_scores.mean(axis=(1,2,3,4,5)), anomalous_scores.mean(axis=(1,2,3,4,5)))
+                    logging.info('============================================================')
+                    # Finish logging
+                    logging.info('============================================================')
+                    logging.info('Logging finished')
             # remove the handler when you're done logging
             logger.removeHandler(condition_handler)
         logger.removeHandler(handler)

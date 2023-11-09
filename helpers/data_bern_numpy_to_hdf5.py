@@ -18,7 +18,8 @@ def prepare_and_write_data_bern(basepath,
                                        idx_start,
                                         idx_end,
                                         filepath_output,
-                                        train_test):
+                                        train_test,
+                                        suffix = ''):
         
     # ==========================================
     # Study the the variation in the sizes along various dimensions (using the function 'find_shapes'), 
@@ -37,16 +38,19 @@ def prepare_and_write_data_bern(basepath,
 
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/controls'
-        img_path = basepath + '/preprocessed/controls/numpy'
+        seg_path = basepath + f'/final_segmentations/controls{suffix}'
+        img_path = basepath + f'/preprocessed/controls/numpy{suffix}'
     elif train_test == 'test':
-        seg_path = basepath + '/final_segmentations/patients'
-        img_path = basepath + '/preprocessed/patients/numpy'
+        seg_path = basepath + f'/final_segmentations/patients{suffix}'
+        img_path = basepath + f'/preprocessed/patients/numpy{suffix}'
     else:
         raise ValueError('train_test must be either train, val or test')
     
+    seg_path_files = os.listdir(seg_path)
+    # Sort
+    seg_path_files.sort()
     
-    patients = os.listdir(seg_path)[idx_start:idx_end]
+    patients = seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
     
     
@@ -95,7 +99,7 @@ def prepare_and_write_data_bern(basepath,
     
         # load the numpy label (saved by the random walker segmenter)
         label_data = np.load(os.path.join(seg_path, patient))
-        # make all images of the same shape
+        # make all labels of the same shape
         label_data = crop_or_pad_Bern_slices(label_data, common_label_shape)                  
         # move the z-axis to the front, as we want to concantenate data along this axis
         label_data = np.moveaxis(label_data, 2, 0)  
@@ -119,7 +123,8 @@ def load_data(basepath,
               idx_start,
               idx_end,
               train_test,
-              force_overwrite=False):
+              force_overwrite=False,
+              suffix = ''):
 
     # ==========================================
     # define file paths for images and labels
@@ -135,7 +140,8 @@ def load_data(basepath,
                                filepath_output = dataset_filepath,
                                idx_start = idx_start,
                                idx_end = idx_end,
-                               train_test = train_test)
+                               train_test = train_test,
+                               suffix = suffix)
     else:
         print('Already preprocessed this configuration. Loading now...')
 

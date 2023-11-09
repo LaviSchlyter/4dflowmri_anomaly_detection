@@ -3,6 +3,9 @@ import h5py
 import numpy as np
 import sys
 from skimage.morphology import skeletonize_3d, dilation, cube, binary_erosion
+
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/helpers/')
 
 from utils import verify_leakage ,crop_or_pad_Bern_slices, normalize_image, normalize_image_new, make_dir_safely, crop_or_pad_normal_slices
@@ -200,7 +203,8 @@ def prepare_and_write_masked_data_bern(basepath,
                            filepath_output,
                             idx_start,
                             idx_end,
-                           train_test):
+                           train_test,
+                           suffix =''):
 
     # ==========================================
     # Study the the variation in the sizes along various dimensions (using the function 'find_shapes'),
@@ -218,17 +222,19 @@ def prepare_and_write_masked_data_bern(basepath,
     # ==========================================
     # ==========================================
     if ['train', 'val'].__contains__(train_test):
-
-        seg_path = basepath + '/final_segmentations/train_val'
-        img_path = basepath + '/preprocessed/controls/numpy'
+        seg_path = basepath + f'/final_segmentations/train_val{suffix}'
+        img_path = basepath + f'/preprocessed/controls/numpy{suffix}'
     elif train_test == 'test':
         # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
-        seg_path = basepath + '/final_segmentations/test'
-        img_path = basepath + '/preprocessed/patients/numpy'
+        seg_path = basepath + f'/final_segmentations/test{suffix}'
+        img_path = basepath + f'/preprocessed/patients/numpy{suffix}'
     else:
         raise ValueError('train_test must be either train, val or test')
     
-    patients = os.listdir(seg_path)[idx_start:idx_end]
+    seg_path_files = os.listdir(seg_path)
+    # Sort
+    seg_path_files.sort()
+    patients = seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
 
 
@@ -258,8 +264,8 @@ def prepare_and_write_masked_data_bern(basepath,
     i = 0
     for patient in patients: 
         
-        print('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load)  + '...')
-        print('patient', patient)
+        logging.info('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load)  + '...')
+        logging.info('patient %s', patient)
         
         if ['train', 'val'].__contains__(train_test):
             image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
@@ -274,13 +280,13 @@ def prepare_and_write_masked_data_bern(basepath,
         
         # normalize the image
         image = normalize_image_new(image)
-        print('Shape of image before network resizing',image.shape)
+        logging.info('Shape of image before network resizing',image.shape)
         # The images need to be sized as in the input of network
         
         
         # make all images of the same shape
         image = crop_or_pad_Bern_slices(image, common_image_shape)
-        print('Shape of image after network resizing',image.shape)
+        logging.info('Shape of image after network resizing',image.shape)
         # move the z-axis to the front, as we want to concantenate data along this axis
         image = np.moveaxis(image, 2, 0)
 
@@ -320,24 +326,26 @@ def load_masked_data(basepath,
               idx_start,
               idx_end,
               train_test,
-              force_overwrite=False):
+              force_overwrite=False,
+              suffix =''):
 
     # ==========================================
     # define file paths for images and labels
     # ==========================================
     savepath = sys_config.project_code_root + 'data'
-    dataset_filepath = savepath + f'/{train_test}_masked_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
+    dataset_filepath = savepath + f'/{train_test}{suffix}_masked_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
-        print('This configuration has not yet been preprocessed.')
-        print('Preprocessing now...')
+        logging.info('This configuration has not yet been preprocessed.')
+        logging.info('Preprocessing now...')
         prepare_and_write_masked_data_bern(basepath = basepath,
                                filepath_output = dataset_filepath,
                                idx_start = idx_start,
                                  idx_end = idx_end,
-                               train_test = train_test)
+                               train_test = train_test,
+                               suffix = suffix)
     else:
-        print('Already preprocessed this configuration. Loading now...')
+        logging.info('Already preprocessed this configuration. Loading now...')
 
     return h5py.File(dataset_filepath, 'r')
 
@@ -375,6 +383,8 @@ def prepare_and_write_sliced_data_bern(basepath,
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
+    # Sort the list
+    list_hand_seg_images.sort()
     if ['train', 'val'].__contains__(train_test):
 
         seg_path = basepath + '/final_segmentations/train_val'
@@ -386,7 +396,11 @@ def prepare_and_write_sliced_data_bern(basepath,
     else:
         raise ValueError('train_test must be either train, val or test')
     
-    patients = os.listdir(seg_path)[idx_start:idx_end]
+    seg_path_files = os.listdir(seg_path)
+    # Sort
+    seg_path_files.sort()
+
+    patients = seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
     
 
@@ -433,8 +447,8 @@ def prepare_and_write_sliced_data_bern(basepath,
     # Filter the patients by name to get the ones from hand-segmented and cnn predictions
     for patient in patients: 
 
-        print('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
-        print('patient: ' + patient)
+        logging.info('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
+        logging.info('patient: ' + patient)
 
         # Check if hand or network segemented (slightly different kernel size on pre-processing)
         if patient in list_hand_seg_images:
@@ -487,8 +501,8 @@ def prepare_and_write_sliced_data_bern(basepath,
         points = points[points[:,0].argsort()[::-1]]
 
         temp = []
-        for index, element in enumerate(points[5:]):
-            if (index%5)==0:
+        for index, element in enumerate(points[2:]):
+            if (index%2)==0:
                 temp.append(element)
 
 
@@ -526,10 +540,10 @@ def prepare_and_write_sliced_data_bern(basepath,
         np.save(savepath_geometry + '/' + patient.replace('seg',''), geometry_dict)
 
         # make all images of the same shape
-        print("Image shape before cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape before cropping and padding:" + str(image_out.shape))
         #image_out = crop_or_pad_Bern_all_slices(image_out, network_common_image_shape)
         image_out = crop_or_pad_normal_slices(image_out, end_shape)
-        print("Image shape after cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape after cropping and padding:" + str(image_out.shape))
 
         if stack_z == True:
             # move the z-axis to the front, as we want to stack the data along this axis
@@ -542,8 +556,8 @@ def prepare_and_write_sliced_data_bern(basepath,
             # move the y-axis to the front, as we want to stack the data along this axis
             image_out = np.moveaxis(image_out, 1, 0)
 
-            print('After shuffling the axis' + str(image_out.shape))
-            print(str(np.max(image_out)))
+            logging.info('After shuffling the axis' + str(image_out.shape))
+            logging.info(str(np.max(image_out)))
 
             # add the image to the hdf5 file
             dataset['straightened_images_%s' % train_test][i*end_shape[1]:(i+1)*end_shape[1], :, :, :, :] = image_out
@@ -573,8 +587,8 @@ def load_cropped_data_sliced(basepath,
     dataset_filepath = savepath + f'/{train_test}_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
-        print('This configuration has not yet been preprocessed.')
-        print('Preprocessing now...')
+        logging.info('This configuration has not yet been preprocessed.')
+        logging.info('Preprocessing now...')
         prepare_and_write_sliced_data_bern(basepath = basepath,
                                filepath_output = dataset_filepath,
                                idx_start=idx_start,
@@ -582,7 +596,7 @@ def load_cropped_data_sliced(basepath,
                                train_test = train_test,
                                stack_z = True)
     else:
-        print('Already preprocessed this configuration. Loading now...')
+        logging.info('Already preprocessed this configuration. Loading now...')
 
     return h5py.File(dataset_filepath, 'r')
 # ====================================================================================
@@ -598,7 +612,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
                            idx_start,
                            idx_end,
                            train_test,
-                           load_anomalous=False):
+                           load_anomalous=False,
+                           suffix =''):
 
     # ==========================================
     # Study the the variation in the sizes along various dimensions (using the function 'find_shapes'),
@@ -615,23 +630,29 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # ==========================================
     # ==========================================
 
-    savepath_geometry = sys_config.project_code_root + 'data' + '/geometry_for_backtransformation'
+    savepath_geometry = sys_config.project_code_root + 'data' + f'/geometry_for_backtransformation{suffix}'
     make_dir_safely(savepath_geometry)
-    hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
-    hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
+    hand_seg_path_controls = basepath + f'/segmenter_rw_pw_hard/controls{suffix}'
+    hand_seg_path_patients = basepath + f'/segmenter_rw_pw_hard/patients{suffix}'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
+    # Sort the list
+    list_hand_seg_images.sort()
     if ['train', 'val'].__contains__(train_test):
 
-        seg_path = basepath + '/final_segmentations/train_val'
-        img_path = basepath + '/preprocessed/controls/numpy'
+        seg_path = basepath + f'/final_segmentations/train_val{suffix}'
+        img_path = basepath + f'/preprocessed/controls/numpy{suffix}'
     elif train_test == 'test':
         # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
-        seg_path = basepath + '/final_segmentations/test'
-        img_path = basepath + '/preprocessed/patients/numpy'
+        seg_path = basepath + f'/final_segmentations/test{suffix}'
+        img_path = basepath + f'/preprocessed/patients/numpy{suffix}'
     else:
         raise ValueError('train_test must be either train, val or test')
     
-    patients = os.listdir(seg_path)[idx_start:idx_end]
+    seg_path_files = os.listdir(seg_path)
+    # Sort
+    seg_path_files.sort()
+    
+    patients = seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
 
     # ==========================================
@@ -663,10 +684,10 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     i = 0
     for patient in patients: 
         
-        #print('loading subject ' + str(n-idx_start+1) + ' out of ' + str(num_images_to_load) + '...')
-        print('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
+        #logging.info('loading subject ' + str(n-idx_start+1) + ' out of ' + str(num_images_to_load) + '...')
+        logging.info('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
 
-        print('patient: ' + patient)
+        logging.info('patient: ' + patient)
         # Check if hand or network segemented (slightly different kernel size on pre-processing)
         if patient in list_hand_seg_images:
             cnn_predictions = False
@@ -679,12 +700,14 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
                 # With patients
                 image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
                 label = np.ones(end_shape[2])
-                print('label', "sick")
+                logging.info('label: sick')
+
             except:
                 # With controls
                 image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
                 label = np.zeros(end_shape[2])
-                print('label', "healthy")
+                logging.info('label: healthy')
+
         segmented_original = np.load(os.path.join(seg_path, patient))
         
 
@@ -742,8 +765,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         points = points[points[:,0].argsort()[::-1]]
 
         temp = []
-        for index, element in enumerate(points[5:]):
-            if (index%5)==0:
+        for index, element in enumerate(points[2:]):
+            if (index%2)==0:
                 temp.append(element)
 
         coords = np.array(temp)
@@ -779,9 +802,9 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         np.save(savepath_geometry + '/' + patient.replace('seg_',''), geometry_dict)
 
         # make all images of the same shape
-        print("Image shape before cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape before cropping and padding:" + str(image_out.shape))
         image_out = crop_or_pad_normal_slices(image_out, end_shape)
-        print("Image shape after cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape after cropping and padding:" + str(image_out.shape))
 
         # move the z-axis to the front, as we want to stack the data along this axis
         image_out = np.moveaxis(image_out, 2, 0)
@@ -810,25 +833,27 @@ def load_masked_data_sliced(basepath,
               idx_end,
               train_test,
               force_overwrite=False,
-              load_anomalous=False):
+              load_anomalous=False,
+              suffix =''):
 
     # ==========================================
     # define file paths for images and labels
     # ==========================================
     savepath = sys_config.project_code_root + 'data'
-    dataset_filepath = savepath + f'/fake_delete_{train_test}_masked_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
+    dataset_filepath = savepath + f'/{train_test}{suffix}_masked_sliced_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
-        print('This configuration has not yet been preprocessed.')
-        print('Preprocessing now...')
+        logging.info('This configuration has not yet been preprocessed.')
+        logging.info('Preprocessing now...')
         prepare_and_write_masked_data_sliced_bern(basepath = basepath,
                                filepath_output = dataset_filepath,
                                idx_start = idx_start,
                                idx_end = idx_end,
                                train_test = train_test,
-                               load_anomalous= load_anomalous)
+                               load_anomalous= load_anomalous,
+                               suffix = suffix)
     else:
-        print('Already preprocessed this configuration. Loading now...')
+        logging.info('Already preprocessed this configuration. Loading now...')
 
     return h5py.File(dataset_filepath, 'r')
 
@@ -867,6 +892,8 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
+    # Sort the list
+    list_hand_seg_images.sort()
 
     if ['train', 'val'].__contains__(train_test):
 
@@ -879,8 +906,11 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
     else:
         raise ValueError('train_test must be either train, val or test')
     
+    seg_path_files = os.listdir(seg_path)
+    # Sort
+    seg_path_files.sort()
     
-    patients = os.listdir(seg_path)[idx_start:idx_end]
+    patients = seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
     
 
@@ -927,8 +957,8 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
     # Filter the patients by name to get the ones from hand-segmented and cnn predictions
     for patient in patients: 
 
-        print('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
-        print('patient: ' + patient)
+        logging.info('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
+        logging.info('patient: ' + patient)
         # Check if hand or network segemented (slightly different kernel size on pre-processing)
         if patient in list_hand_seg_images:
             cnn_predictions = False
@@ -977,8 +1007,8 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
         points = order_points(points)
 
         temp = []
-        for index, element in enumerate(points[5:]):
-            if (index%5)==0:
+        for index, element in enumerate(points[2:]):
+            if (index%2)==0:
                 temp.append(element)
 
 
@@ -1019,10 +1049,10 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
 
 
         # make all images of the same shape
-        print("Image shape before cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape before cropping and padding:" + str(image_out.shape))
         #image_out = crop_or_pad_Bern_all_slices(image_out, network_common_image_shape)
         image_out = crop_or_pad_normal_slices(image_out, end_shape)
-        print("Image shape after cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape after cropping and padding:" + str(image_out.shape))
 
         if stack_z == True:
             # move the z-axis to the front, as we want to stack the data along this axis
@@ -1035,8 +1065,8 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
             # move the y-axis to the front, as we want to stack the data along this axis
             image_out = np.moveaxis(image_out, 1, 0)
 
-            print('After shuffling the axis' + str(image_out.shape))
-            print(str(np.max(image_out)))
+            logging.info('After shuffling the axis' + str(image_out.shape))
+            logging.info(str(np.max(image_out)))
 
             # add the image to the hdf5 file
             dataset['straightened_images_%s' % train_test][i*end_shape[1]:(i+1)*end_shape[1], :, :, :, :] = image_out
@@ -1066,8 +1096,8 @@ def load_cropped_data_sliced_full_aorta(basepath,
     dataset_filepath = savepath + f'/{train_test}_sliced_images_full_aorta_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
-        print('This configuration has not yet been preprocessed.')
-        print('Preprocessing now...')
+        logging.info('This configuration has not yet been preprocessed.')
+        logging.info('Preprocessing now...')
         prepare_and_write_sliced_data_full_aorta_bern(basepath = basepath,
                                filepath_output = dataset_filepath,
                                idx_start=idx_start,
@@ -1075,7 +1105,7 @@ def load_cropped_data_sliced_full_aorta(basepath,
                                train_test = train_test,
                                stack_z = True)
     else:
-        print('Already preprocessed this configuration. Loading now...')
+        logging.info('Already preprocessed this configuration. Loading now...')
 
     return h5py.File(dataset_filepath, 'r')
 
@@ -1112,6 +1142,10 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
     hand_seg_path_controls = basepath + '/segmenter_rw_pw_hard/controls'
     hand_seg_path_patients = basepath + '/segmenter_rw_pw_hard/patients'
     list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
+    
+    list_hand_seg_images.sort()
+
+    
     if ['train', 'val'].__contains__(train_test):
 
         seg_path = basepath + '/final_segmentations/train_val'
@@ -1123,8 +1157,11 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
     else:
         raise ValueError('train_test must be either train, val or test')
     
+    seg_path_files = os.listdir(seg_path)
+    # Sort
+    seg_path_files.sort()
     
-    patients = os.listdir(seg_path)[idx_start:idx_end]
+    patients = seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
 
     # ==========================================
@@ -1157,10 +1194,10 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
     i = 0
     for patient in patients: 
         
-        #print('loading subject ' + str(n-idx_start+1) + ' out of ' + str(num_images_to_load) + '...')
-        print('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
+        #logging.info('loading subject ' + str(n-idx_start+1) + ' out of ' + str(num_images_to_load) + '...')
+        logging.info('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
 
-        print('patient: ' + patient)
+        logging.info('patient: ' + patient)
 
         # Check if hand or network segemented (slightly different kernel size on pre-processing)
         if patient in list_hand_seg_images:
@@ -1228,8 +1265,8 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
         points = order_points(points)
 
         temp = []
-        for index, element in enumerate(points[5:]):
-            if (index%5)==0:
+        for index, element in enumerate(points[2:]):
+            if (index%2)==0:
                 temp.append(element)
 
         coords = np.array(temp)
@@ -1270,9 +1307,9 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
 
 
         # make all images of the same shape
-        print("Image shape before cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape before cropping and padding:" + str(image_out.shape))
         image_out = crop_or_pad_normal_slices(image_out, end_shape)
-        print("Image shape after cropping and padding:" + str(image_out.shape))
+        logging.info("Image shape after cropping and padding:" + str(image_out.shape))
 
         # move the z-axis to the front, as we want to stack the data along this axis
         image_out = np.moveaxis(image_out, 2, 0)
@@ -1308,8 +1345,8 @@ def load_masked_data_sliced_full_aorta(basepath,
     dataset_filepath = savepath + f'/{train_test}_masked_sliced_images_full_aorta_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
 
     if not os.path.exists(dataset_filepath) or force_overwrite:
-        print('This configuration has not yet been preprocessed.')
-        print('Preprocessing now...')
+        logging.info('This configuration has not yet been preprocessed.')
+        logging.info('Preprocessing now...')
         prepare_and_write_masked_data_sliced_full_aorta_bern(basepath = basepath,
                                filepath_output = dataset_filepath,
                                idx_start = idx_start,
@@ -1317,7 +1354,7 @@ def load_masked_data_sliced_full_aorta(basepath,
                                train_test = train_test,
                                load_anomalous= load_anomalous)
     else:
-        print('Already preprocessed this configuration. Loading now...')
+        logging.info('Already preprocessed this configuration. Loading now...')
 
     return h5py.File(dataset_filepath, 'r')
 
@@ -1335,26 +1372,29 @@ if __name__ == '__main__':
     # Make sure that any patient from the training/validation set is not in the test set
     verify_leakage()
 
-    #masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
-    #masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
-    #masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
+    masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
+    masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')    
+    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
+    masked_sliced_data_test_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=8, train_test='test', suffix='_compressed_sensing')    
+
+    masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
+    masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
+    masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test')
     
 
-    #sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', force_overwrite=True)
-    #sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', force_overwrite=True)
-    #sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', force_overwrite=True)
+    sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
+    sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')
+    sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
     
-    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
-    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')    
-    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
+    
 
     #sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
     #sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
-    #sliced_data_full_aorta_test = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=20, train_test='test', force_overwrite=True)
+    #sliced_data_full_aorta_test = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=20, train_test='test')
     
     #masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
     #masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
-    #masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=34, train_test='test', force_overwrite=False)
+    #masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=34, train_test='test')
 
     
     

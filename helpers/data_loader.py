@@ -13,7 +13,7 @@ import h5py
 # ==================================================================
 # Load the data
 # ==================================================================
-def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8, idx_start_ts = 0, idx_end_ts = 2, with_test_labels = False):
+def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8, idx_start_ts = 0, idx_end_ts = 2, with_test_labels = False, suffix = ''):
     """
     Load the data from the numpy files and preprocess it according to the config file.
     
@@ -207,6 +207,7 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_start=idx_start_ts,
                                                                                 idx_end=idx_end_ts,
                                                                                 train_test='test',
+                                                                                suffix = suffix,
                                                                                 )
         
         images_ts = data_ts['sliced_images_test']
