@@ -9,38 +9,48 @@ from config import system_eval as config_sys
 import SimpleITK as sitk
 
 
-list_of_best_experiments_run1 = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100",
+list_of_example_experiments =["vae_convT/masked_slice/20230726-0849_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice_decreased_interpolation_factor_cube_3",
+                                     "vae_convT/masked_slice/20230728-2259_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_20"]
+
+list_of_experiments = ["vae_convT/masked_slice/20230726-0849_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice_decreased_interpolation_factor_cube_3"]
+
+list_of_experiments = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100",
                                      "vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3",
                                      "cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
+suffix = ''
+compressed_sensing = True
 
-list_of_experiments = ["vae_convT/masked_slice/20230726-0849_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice_decreased_interpolation_factor_cube_3",
-                                     "cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
-
+if compressed_sensing:
+    suffix = '_compressed_sensing'
 # Main
 if __name__ == '__main__':
     project_code_root = config_sys.project_code_root
     project_data_root = config_sys.project_data_root
 
     # Path to the raw images
-    img_path = os.path.join(project_data_root, 'preprocessed/patients/numpy')
+    img_path = os.path.join(project_data_root, f'preprocessed/patients/numpy{suffix}')
 
     # Path to the geometry information
-    geometry_path = os.path.join(project_code_root, 'data/geometry_for_backtransformation')
+    geometry_path = os.path.join(project_code_root, f'data/geometry_for_backtransformation{suffix}')
 
 
     for experiment in list_of_experiments:
+
+        print('---------------------------- Expirment Name -----------------------------------')
+        print(experiment)
         results_dir = os.path.join(project_code_root,'Results/Evaluation/' + experiment)
         
         # Anomaly scores
-        anomaly_scores_paths = os.path.join(results_dir, 'test/outputs')
+        anomaly_scores_paths = os.path.join(results_dir, f'test{suffix}/outputs')
 
         # Save path
-        save_path = os.path.join(results_dir, 'test/outputs_backtransformed')
+        save_path = os.path.join(results_dir, f'test{suffix}/outputs_backtransformed')
         make_dir_safely(save_path)
 
 
-        # ubjects
+        # Subjects
         subjects = os.listdir(anomaly_scores_paths)
+        subjects.sort()
         
         # For each subject we need to backtransform the anomaly scores
         for i, subject in enumerate(subjects):
