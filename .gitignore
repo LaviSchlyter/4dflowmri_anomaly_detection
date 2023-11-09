@@ -166,6 +166,8 @@ logs/*
 wandb/*
 .vscode/*
 sbatch_log/*
+sbatch_log_inference/*
+helpers/preprocess_logs/*
 # Images
 *.png
 # numpy files
@@ -175,4 +177,8 @@ sbatch_log/*
 !requirement.txt
 # vtk files
 *.vtk
+
+verify_slicing_rotation.ipynb
+
+
 
