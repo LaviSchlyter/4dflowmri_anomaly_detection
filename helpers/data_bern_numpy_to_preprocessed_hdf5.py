@@ -69,6 +69,22 @@ def extract_slice_from_sitk_image(sitk_image, point, Z, X, new_size, fill_value=
     output_dict['origin'] = resampled_sitk_image.GetOrigin()
     return output_dict
 
+def rotate_vectors(vectors, rotation_matrix):
+    """
+    Rotates a 2D array of 3D vectors using a 3D rotation matrix.
+    """
+    # Reshape the vectors array for matrix multiplication
+    vectors_flat = vectors.reshape(-1, 3)
+    vectors_flat[:, [0, 2]] = vectors_flat[:, [2, 0]]
+    rotated_vectors_flat = np.dot(rotation_matrix, vectors_flat.T).T
+    
+    # Reshape back to original shape
+    rotated_vectors = rotated_vectors_flat.reshape(vectors.shape)
+    
+    
+    return rotated_vectors
+
+
 def interpolate_and_slice(image,
                           coords,
                           size, 
@@ -136,7 +152,7 @@ def calc_angle(v1, v2, reflex=False):
         return 2 * np.pi - angle
     
 # TODO: Limitation because of the while loop, how do you find the last point
-def order_points(candidate_points):
+def order_points(candidate_points, angle_threshold=np.pi/2.):
     ordered_points = []
     
     #take first point
@@ -156,7 +172,7 @@ def order_points(candidate_points):
         
         for cp_i in nn:
             ang = calc_angle(ordered_points[-2]-ordered_points[-1], candidate_points[cp_i]-ordered_points[-1])
-            if ang > (np.pi/2.):
+            if ang > (angle_threshold):
                 found =1
 
                 ordered_points.append(candidate_points[cp_i])
@@ -222,12 +238,12 @@ def prepare_and_write_masked_data_bern(basepath,
     # ==========================================
     # ==========================================
     if ['train', 'val'].__contains__(train_test):
-        seg_path = basepath + f'/final_segmentations/train_val{suffix}'
-        img_path = basepath + f'/preprocessed/controls/numpy{suffix}'
+        seg_path = basepath + f'/final_segmentations/train_val'
+        img_path = basepath + f'/preprocessed/controls/numpy'
     elif train_test == 'test':
         # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
-        seg_path = basepath + f'/final_segmentations/test{suffix}'
-        img_path = basepath + f'/preprocessed/patients/numpy{suffix}'
+        seg_path = basepath + f'/final_segmentations/test'
+        img_path = basepath + f'/preprocessed/patients/numpy'
     else:
         raise ValueError('train_test must be either train, val or test')
     
@@ -523,7 +539,7 @@ def prepare_and_write_sliced_data_bern(basepath,
                     save_for_backtransformation = True
                 else:
                     save_for_backtransformation = False
-                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape, smoothness=10)
                 if save_for_backtransformation:
                     geometry_saved = True  
                     geometry_dict = slice_dict['geometry_dict']
@@ -607,13 +623,27 @@ def load_cropped_data_sliced(basepath,
 # ====================================================================================
 # *** MASKED SLICED DATA ****
 #====================================================================================
+
+def find_and_load_image(patient, basepaths):
+    for path in basepaths:
+        try:
+            return np.load(os.path.join(path, patient.replace("seg_", "")))
+        except FileNotFoundError:
+            continue
+    raise FileNotFoundError(f"Image for patient {patient} not found in any of the provided paths.")
+
+
 def prepare_and_write_masked_data_sliced_bern(basepath,
                            filepath_output,
                            idx_start,
                            idx_end,
                            train_test,
                            load_anomalous=False,
-                           suffix =''):
+                           include_compressed_sensing=True,
+                           suffix ='',
+                           updated_ao = False,
+                           skip = True,
+                           smoothness = 10):
 
     # ==========================================
     # Study the the variation in the sizes along various dimensions (using the function 'find_shapes'),
@@ -630,30 +660,73 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # ==========================================
     # ==========================================
 
-    savepath_geometry = sys_config.project_code_root + 'data' + f'/geometry_for_backtransformation{suffix}'
+    # Log some parameters
+    logging.info(f"include_compressed_sensing: {include_compressed_sensing}")
+    logging.info(f"updated_ao: {updated_ao}")
+    logging.info(f"skip: {skip}")
+    logging.info(f"smoothness: {smoothness}")
+
+
+    savepath_geometry = sys_config.project_code_root + 'data' + f'/geometry_for_backtransformation'
     make_dir_safely(savepath_geometry)
-    hand_seg_path_controls = basepath + f'/segmenter_rw_pw_hard/controls{suffix}'
-    hand_seg_path_patients = basepath + f'/segmenter_rw_pw_hard/patients{suffix}'
-    list_hand_seg_images = os.listdir(hand_seg_path_controls) + os.listdir(hand_seg_path_patients)
+    hand_seg_path_controls = [basepath + f'/segmenter_rw_pw_hard/controls',
+                              basepath + f'/segmenter_rw_pw_hard/controls_compressed_sensing']
+    hand_seg_path_patients = [basepath + f'/segmenter_rw_pw_hard/patients',
+                              basepath + f'/segmenter_rw_pw_hard/patients_compressed_sensing']
+    list_hand_seg_images = []
+    for path in hand_seg_path_controls + hand_seg_path_patients:
+        list_hand_seg_images.extend(os.listdir(path))
     # Sort the list
     list_hand_seg_images.sort()
     if ['train', 'val'].__contains__(train_test):
+        seg_path = basepath + f'/final_segmentations/train_val'
+        img_path = basepath + f'/preprocessed/controls/numpy'
+        img_path_compressed = basepath + f'/preprocessed/controls/numpy_compressed_sensing'
 
-        seg_path = basepath + f'/final_segmentations/train_val{suffix}'
-        img_path = basepath + f'/preprocessed/controls/numpy{suffix}'
     elif train_test == 'test':
-        # For the img_path we need to look into the patients folder or the controls folder, try both, see further down
-        seg_path = basepath + f'/final_segmentations/test{suffix}'
-        img_path = basepath + f'/preprocessed/patients/numpy{suffix}'
+        seg_path = basepath + f'/final_segmentations/test'
+        img_path = basepath + f'/preprocessed/patients/numpy'
+        img_path_compressed = basepath + f'/preprocessed/patients/numpy_compressed_sensing'
+        img_paths = [img_path, img_path_compressed]
     else:
         raise ValueError('train_test must be either train, val or test')
+
+    non_cs_img_path_controls = basepath + f'/preprocessed/controls/numpy'
+    non_cs_img_path_patients = basepath + f'/preprocessed/patients/numpy'
+
+
+
+    img_paths_controls = [basepath + f'/preprocessed/controls/numpy', basepath + f'/preprocessed/controls/numpy_compressed_sensing']
+    img_paths_patients = [basepath + f'/preprocessed/patients/numpy', basepath + f'/preprocessed/patients/numpy_compressed_sensing']
+
+
+    # Paths for non compressed sensing data
+
     
     seg_path_files = os.listdir(seg_path)
     # Sort
     seg_path_files.sort()
-    
-    patients = seg_path_files[idx_start:idx_end]
+    # Filter based on the include_compressed_sensing flag
+    filtered_seg_path_files = []
+    for file in seg_path_files:
+        # Remove 'seg_' prefix to get the corresponding image file name
+        corresponding_img_file = file.replace('seg_', '')
+        
+        # Check if the file exists in either non-compressed sensing image path
+        file_exists_in_non_cs_controls = os.path.exists(os.path.join(non_cs_img_path_controls, corresponding_img_file))
+        file_exists_in_non_cs_patients = os.path.exists(os.path.join(non_cs_img_path_patients, corresponding_img_file))
+
+        # Include file based on the include_compressed_sensing flag and existence in non-CS paths
+        if include_compressed_sensing or (not include_compressed_sensing and (file_exists_in_non_cs_controls or file_exists_in_non_cs_patients)):
+            filtered_seg_path_files.append(file)
+
+    # Use the filtered list for further processing
+    patients = filtered_seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
+
+    
+    #patients = seg_path_files[idx_start:idx_end]
+    #num_images_to_load = len(patients)
 
     # ==========================================
     # we will stack all images along their z-axis
@@ -684,31 +757,27 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     i = 0
     for patient in patients: 
         
-        #logging.info('loading subject ' + str(n-idx_start+1) + ' out of ' + str(num_images_to_load) + '...')
+        
         logging.info('loading subject ' + str(i+1) + ' out of ' + str(num_images_to_load) + '...')
 
         logging.info('patient: ' + patient)
         # Check if hand or network segemented (slightly different kernel size on pre-processing)
-        if patient in list_hand_seg_images:
-            cnn_predictions = False
-        
         if ['train', 'val'].__contains__(train_test):
-            image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+            # For train and val, try both controls paths
+            image = find_and_load_image(patient, img_paths_controls)
         elif train_test == 'test':
-            # We need to look into the patients folder or the controls folder, try both
+            # For test, try all four paths
             try:
-                # With patients
-                image = np.load(os.path.join(img_path, patient.replace("seg_", "")))
+                image = find_and_load_image(patient, img_paths_patients)
                 label = np.ones(end_shape[2])
                 logging.info('label: sick')
-
-            except:
-                # With controls
-                image = np.load(os.path.join(img_path.replace("patients", "controls"), patient.replace("seg_", "")))
+            except FileNotFoundError:
+                image = find_and_load_image(patient, img_paths_controls)
                 label = np.zeros(end_shape[2])
                 logging.info('label: healthy')
 
         segmented_original = np.load(os.path.join(seg_path, patient))
+
         
 
         # Enlarge the segmentation slightly to be sure that there are no cutoffs of the aorta
@@ -754,23 +823,42 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         # Get the points of the centerline as an array
         points = np.array(np.where(skeleton != 0)).transpose([1,0])
         """
+    
 
+         
+        if updated_ao:
+            try:
+            
+                points_order_ascending_aorta = order_points(points[::-1], angle_threshold=3/2*np.pi/2.)
+                logging.info('points order ascending aorta with angle threshold 3/2*np.pi/2.')
+            except Exception as e:
+                try:
+                    points_order_ascending_aorta = order_points(points[::-1], angle_threshold=1/2*np.pi/2.)
+                    logging.info('points order ascending aorta with angle threshold 1/2*np.pi/2.')
+                except Exception as e:
+                    points_order_ascending_aorta = np.array([0,0,0])
+                    logging.info(f'An error occurred while processing {patient} ascending aorta: {e}')
+            
+            points = points[(points[:, 0] <= 90) & (points[:, 0] >= points_order_ascending_aorta[0][0]) & (points[:, 1] <= points_order_ascending_aorta[0][1])]
+
+        else:
+            points = points[np.where(points[:,1]<65)]
+            points = points[np.where(points[:,0]<90)]
         
-
-        # Limit to sectors where ascending aorta is located
-        points = points[np.where(points[:,1]<60)]
-        points = points[np.where(points[:,0]<90)]
-
-        # Order the points in ascending order with x
+        points = points[2:-2]
         points = points[points[:,0].argsort()[::-1]]
-
-        temp = []
-        for index, element in enumerate(points[2:]):
-            if (index%2)==0:
-                temp.append(element)
-
-        coords = np.array(temp)
         
+        
+
+        if skip:
+            temp = []
+            for index, element in enumerate(points):
+                if (index%2)==0:
+                    temp.append(element)
+
+            coords = np.array(temp)
+        else:
+            coords = np.array(points)    
 
         #===========================================================================================
         # Parameters for the interpolation and creation of the files
@@ -786,18 +874,32 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
                     save_for_backtransformation = True
                 else:
                     save_for_backtransformation = False
-                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape)
+                slice_dict = interpolate_and_slice(image[:,:,:,t,channel], coords, common_image_shape, smoothness=smoothness)
                 if save_for_backtransformation:
                     geometry_saved = True  
                     geometry_dict = slice_dict['geometry_dict']
                 straightened = slice_dict['straightened']
+
                 temp_for_time_stacking.append(straightened)
 
             channel_stacked = np.stack(temp_for_time_stacking, axis=-1)
             temp_for_channel_stacking.append(channel_stacked)
 
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
-        image_out = straightened
+
+        if suffix.__contains__('_without_rotation'):
+            logging.info('Not rotating the vectors')
+            straightened_rotated_vectors = straightened.copy()
+        else:
+            logging.info('Rotating the vectors')
+            # We need to rotate the vectors as well loop through slices
+            straightened_rotated_vectors = straightened.copy()
+            for z_ in range(straightened.shape[2]):
+                for t_ in range(straightened.shape[3]):
+                    rotation_matrix = np.array(slice_dict['geometry_dict'][f'slice_{z_}']['transform'].GetInverse().GetMatrix()).reshape(3,3)
+                    straightened_rotated_vectors[:,:,z_,t_,1:] = rotate_vectors(straightened[:,:,z_,t_,1:], rotation_matrix)
+
+        image_out = straightened_rotated_vectors
         # Save the geometries for backtransformation with name of patient
         np.save(savepath_geometry + '/' + patient.replace('seg_',''), geometry_dict)
 
@@ -818,6 +920,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
 
         # increment the index being used to write in the hdf5 datasets
         i = i + 1
+        
+        
 
     # ==========================================
     # close the hdf5 file
@@ -834,7 +938,11 @@ def load_masked_data_sliced(basepath,
               train_test,
               force_overwrite=False,
               load_anomalous=False,
-              suffix =''):
+              include_compressed_sensing=True,              
+              suffix ='',
+              updated_ao = False,
+              skip = True,
+              smoothness = 10):
 
     # ==========================================
     # define file paths for images and labels
@@ -845,15 +953,23 @@ def load_masked_data_sliced(basepath,
     if not os.path.exists(dataset_filepath) or force_overwrite:
         logging.info('This configuration has not yet been preprocessed.')
         logging.info('Preprocessing now...')
+        # Name of file
+        logging.info('Name of file: ' + dataset_filepath)
         prepare_and_write_masked_data_sliced_bern(basepath = basepath,
                                filepath_output = dataset_filepath,
                                idx_start = idx_start,
                                idx_end = idx_end,
                                train_test = train_test,
                                load_anomalous= load_anomalous,
-                               suffix = suffix)
+                               include_compressed_sensing=include_compressed_sensing,
+                               suffix = suffix,
+                                updated_ao = updated_ao,
+                                skip = skip,
+                                smoothness = smoothness
+                               )
     else:
         logging.info('Already preprocessed this configuration. Loading now...')
+        logging.info('Name of file: ' + dataset_filepath)
 
     return h5py.File(dataset_filepath, 'r')
 
@@ -1042,8 +1158,16 @@ def prepare_and_write_sliced_data_full_aorta_bern(basepath,
             temp_for_channel_stacking.append(channel_stacked)
 
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
+        # We need to rotate the vectors as well loop through slices
+        straightened_rotated_vectors = straightened.copy()
+        for z_ in range(straightened.shape[2]):
+            for t_ in range(straightened.shape[3]):
+                rotation_matrix = np.array(slice_dict['geometry_dict'][f'slice_{z_}']['transform'].GetInverse().GetMatrix()).reshape(3,3)
+                straightened_rotated_vectors[:,:,z_,t_,1:] = rotate_vectors(straightened[:,:,z_,t_,1:], rotation_matrix)
 
-        image_out  = straightened
+        image_out = straightened_rotated_vectors
+
+        
         # Save the geometries for backtransformation with name of patient
         np.save(savepath_geometry + '/' + patient.replace('seg',''), geometry_dict)
 
@@ -1298,7 +1422,15 @@ def prepare_and_write_masked_data_sliced_full_aorta_bern(basepath,
             temp_for_channel_stacking.append(channel_stacked)
 
         straightened = np.stack(temp_for_channel_stacking, axis=-1)
-        image_out = straightened
+        # We need to rotate the vectors as well loop through slices
+        straightened_rotated_vectors = straightened.copy()
+        for z_ in range(straightened.shape[2]):
+            for t_ in range(straightened.shape[3]):
+                rotation_matrix = np.array(slice_dict['geometry_dict'][f'slice_{z_}']['transform'].GetInverse().GetMatrix()).reshape(3,3)
+                straightened_rotated_vectors[:,:,z_,t_,1:] = rotate_vectors(straightened[:,:,z_,t_,1:], rotation_matrix)
+
+        image_out = straightened_rotated_vectors
+        
 
         # Save the geometries for backtransformation with name of patient
         np.save(savepath_geometry + '/' + patient.replace('seg',''), geometry_dict)
@@ -1372,19 +1504,27 @@ if __name__ == '__main__':
     # Make sure that any patient from the training/validation set is not in the test set
     verify_leakage()
 
-    masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
-    masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')    
-    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
-    masked_sliced_data_test_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=8, train_test='test', suffix='_compressed_sensing')    
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite=False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)    
+    #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite=False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)    
+    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs', include_compressed_sensing = False, force_overwrite= False)    
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=48, train_test='train', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite=False)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=48, idx_end=58, train_test='val', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite= True)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=48, idx_end=58, train_test='val', suffix = '_with_rotation', include_compressed_sensing = True, force_overwrite= True)    
+    #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=46, train_test='test', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite= False)
+    #masked_sliced_data_test_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=8, train_test='test', suffix='_compressed_sensing')    
 
-    masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
-    masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
-    masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test')
-    
-
-    sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
-    sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')
-    sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
+    #masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
+    #masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
+    #masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test')
+    #
+#
+    #sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
+    #sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')
+    #sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
     
     
 
