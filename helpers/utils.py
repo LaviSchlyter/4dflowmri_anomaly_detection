@@ -1,7 +1,7 @@
 import os 
 import timeit
 import SimpleITK as sitk
-from tvtk.api import tvtk, write_data
+#from tvtk.api import tvtk, write_data
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
@@ -145,10 +145,10 @@ def apply_blending(input_images, images_for_blend, mask_blending):
         else:
             # Apply Poisson blending with source
             
-            blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
+            #blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
             #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
             #blending_function = Cutout(labeller)
-            #blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
+            blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
             blended_image, anomaly_mask = blending_function(input_, mask_blending)
             
         #
@@ -509,7 +509,7 @@ def resample_back(anomaly_score, sitk_original_image, geometry_dict):
 # ==================================================================
 # To visualize the backtransformed anomaly scores we need to convert them to vtk
 # ==================================================================
-
+"""
 def convert_to_vtk(backtransformed_anomaly_score, subject_id, save_dir):
     # Note that you will need to threshold just above zero to get the
     # anomaly score to show up in paraview since we fill up the background
@@ -544,7 +544,9 @@ def convert_to_vtk(backtransformed_anomaly_score, subject_id, save_dir):
         anomaly_score_grid.point_data.scalars = anomaly_score_vec
         anomaly_score_grid.point_data.scalars.name = 'anomaly_score_intensity'
         write_data(anomaly_score_grid, os.path.join(save_dir,f"{subject_id}_anomaly_score_t{time_slice}.vtk"))
-    
+"""
+
+"""
     
 # ==================================================================
 # Combine the functions to backtransform the anomaly scores
@@ -558,3 +560,5 @@ def backtransform_anomaly_scores(anomaly_score, subject_id, output_dir, geometry
     #np.save(os.path.join(output_dir, subject_id, f"{subject_id}_backtransformed_anomaly_score.npy"), backtransformed_anomaly_score)
     # Convert to vtk
     convert_to_vtk(backtransformed_anomaly_score, subject_id, output_dir)
+
+"""

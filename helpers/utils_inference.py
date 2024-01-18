@@ -136,19 +136,19 @@ def compute_average_precision(healthy_scores, anomalous_scores, format_wise= Fal
     logging.info('============================================================')
 
 
-def validation_metrics(anomaly_scores, masks, deformation = None):
+def validation_metrics(anomaly_scores, masks, deformation = None, results_dir = None):
                 ## Patient wise
                 anomalous_subjects_indexes = np.max(masks, axis=(1,2,3,4,5)).astype(bool)
                 healthy_subjects_indexes = np.logical_not(np.max(masks, axis=(1,2,3,4,5)).astype(bool))
                 healthy_scores = anomaly_scores[healthy_subjects_indexes]
                 anomalous_scores = anomaly_scores[anomalous_subjects_indexes]
                 if (len(healthy_scores) !=0) and (len(healthy_scores) !=0):
-                    compute_auc(healthy_scores, anomalous_scores, format_wise= "patient_wise", agg_function=np.mean, data = "validation",deformation = deformation)
-                    compute_average_precision(healthy_scores, anomalous_scores, format_wise= "patient_wise", agg_function=np.mean, data = "validation")
+                    compute_auc(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores,results_dir = results_dir, format_wise= "patient_wise", agg_function=np.mean, data = "validation",deformation = deformation)
+                    compute_average_precision(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores, format_wise= "patient_wise", agg_function=np.mean, data = "validation")
                 else:
                     logging.info('Patient Wise: Same class for all - cannot compute')
-                plot_scores(healthy_scores, anomalous_scores, level = 'patient', agg_function= np.mean, data="validation",deformation = deformation)
-                plot_scores(healthy_scores, anomalous_scores, level = 'imagewise', agg_function= np.mean, data="validation",deformation = deformation)
+                plot_scores(healthy_scores, anomalous_scores,results_dir = results_dir, level = 'patient', data="validation",deformation = deformation)
+                plot_scores(healthy_scores, anomalous_scores,results_dir = results_dir, level = 'imagewise', data="validation",deformation = deformation)
 
                 ## Image wise
                 anomalous_subjects_indexes = np.max(masks, axis=(2,3,4,5)).astype(bool)
@@ -156,8 +156,8 @@ def validation_metrics(anomaly_scores, masks, deformation = None):
                 healthy_scores = anomaly_scores[healthy_subjects_indexes]
                 anomalous_scores = anomaly_scores[anomalous_subjects_indexes]
                 if (len(healthy_scores) !=0) and (len(healthy_scores) !=0):
-                    compute_auc(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function=np.mean, data = "validation",deformation = deformation)
-                    compute_average_precision(healthy_scores, anomalous_scores, format_wise= "imagewise", agg_function=np.mean, data = "validation")
+                    compute_auc(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores,results_dir = results_dir,  format_wise= "imagewise", agg_function=np.mean, data = "validation",deformation = deformation)
+                    compute_average_precision(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores, format_wise= "imagewise", agg_function=np.mean, data = "validation")
                 else:
                     logging.info('Image Wise: Same class for all - cannot compute')
 
@@ -167,7 +167,7 @@ def validation_metrics(anomaly_scores, masks, deformation = None):
                 healthy_scores = anomaly_scores.reshape(-1,32,32)[healthy_subjects_indexes.flatten()]
                 anomalous_scores =anomaly_scores.reshape(-1,32,32)[anomalous_subjects_indexes.flatten()]
                 if (len(healthy_scores) !=0) and (len(healthy_scores) !=0):
-                    compute_auc(healthy_scores, anomalous_scores, format_wise= "2Dslice", agg_function=np.mean, data = "validation",deformation = deformation)
+                    compute_auc(healthy_scores, anomalous_scores, results_dir = results_dir, format_wise= "2Dslice", agg_function=np.mean, data = "validation",deformation = deformation)
                     compute_average_precision(healthy_scores, anomalous_scores, format_wise= "2Dslice", agg_function=np.mean, data = "validation")
                 else:
                     logging.info('2DSlice Wise: Same class for all - cannot compute')
