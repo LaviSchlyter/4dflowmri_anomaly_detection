@@ -400,6 +400,11 @@ def prepare_and_write_synthetic_data(data,
             dataset['masks'][i*data_shape[0]:(i+1)*data_shape[0],:,:,:,:] = np.zeros_like(data)
         else:
             for j, image in enumerate(data):
+                # Logging the progress out of total
+                if j % 10 == 0:
+                    print(f"Processing image {j} of {data_shape[0]}")
+
+
                 # Add batch dimension to 1
                 image = np.expand_dims(image, axis=0)
                 if deformation_type == 'noisy':
@@ -541,8 +546,12 @@ def load_create_syntetic_data(data,
                                 )
         
         print('Preprocessing done.')
+        # Name of  file
+        print('Loading data from: ', dataset_filepath)
     else:
         print('Already preprocessed this configuration. Loading now...')
+        # Name file
+        print('Loading data from: ', dataset_filepath)
     
     return h5py.File(dataset_filepath, 'r')
 
@@ -559,21 +568,40 @@ if __name__ == '__main__':
     # Set config
     config = dict()
     # 'None', 'mask', 'slice', 'masked_slice', 'sliced_full_aorta', 'masked_sliced_full_aorta', 'mock_square'
-    config['preprocess_method'] = 'sliced_full_aorta' 
+    config['preprocess_method'] = 'masked_slice' 
 
     # Load the validation data on which we apply the synthetic anomalies
-    _, images_vl, _ = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 35, idx_end_vl = 42, idx_start_ts = 0, idx_end_ts = 2)
+    #val_masked_sliced_images_from_48_to_58 # '_without_rotation_without_cs_skip_updated_ao_S10', _with_rotation_only_cs_skip_updated_ao_S10
+    suffix = '_without_rotation_with_cs_skip_updated_ao_S10'  #_without_rotation_with_cs_skip_updated_ao_S10
+    #idx_start_vl = 35
+    #idx_end_vl = 42
+    idx_start_vl = 41
+    idx_end_vl = 51
+    _, images_vl, _ = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 1, idx_start_vl = idx_start_vl, idx_end_vl = idx_end_vl, idx_start_ts = 0, idx_end_ts = 1, suffix = suffix)
+    
+    #images_vl = h5py.File('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/val_with_rotation_without_cs_masked_sliced_images_from_35_to_42.hdf5','r')['sliced_images_val'][:]
 
     # Create synthetic anomalies
     data = load_create_syntetic_data(data = images_vl,
                         deformation_list = deformation_list,
                         preprocessing_method = config['preprocess_method'],
-                        idx_start = 35,
-                        idx_end = 42,
+                        idx_start = idx_start_vl,
+                        idx_end = idx_end_vl,
                         force_overwrite=True,
-                        note = 'decreased_interpolation_factor_cube_3')
+                        note = f'{suffix}_decreased_interpolation_factor_cube_3')
     
+    deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+    
+    #data = load_create_syntetic_data(data = images_vl,
+    #                    deformation_list = deformation_list,
+    #                    preprocessing_method = config['preprocess_method'],
+    #                    idx_start = 48,
+    #                    idx_end = 58,
+    #                    force_overwrite=False,
+    #                    note = 'without_noise_cube_3')
+    #
     # decreased_interpolation_factor_cube_3
+    # without_noise_cube_3
     
 
 
