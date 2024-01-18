@@ -640,6 +640,7 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
                            train_test,
                            load_anomalous=False,
                            include_compressed_sensing=True,
+                           only_compressed_sensing=False,
                            suffix ='',
                            updated_ao = False,
                            skip = True,
@@ -665,6 +666,7 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     logging.info(f"updated_ao: {updated_ao}")
     logging.info(f"skip: {skip}")
     logging.info(f"smoothness: {smoothness}")
+    logging.info(f"only_compressed_sensing: {only_compressed_sensing}")
 
 
     savepath_geometry = sys_config.project_code_root + 'data' + f'/geometry_for_backtransformation'
@@ -678,26 +680,39 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         list_hand_seg_images.extend(os.listdir(path))
     # Sort the list
     list_hand_seg_images.sort()
-    if ['train', 'val'].__contains__(train_test):
+    if ((['train', 'val'].__contains__(train_test)) and (not only_compressed_sensing)):
         seg_path = basepath + f'/final_segmentations/train_val'
         img_path = basepath + f'/preprocessed/controls/numpy'
         img_path_compressed = basepath + f'/preprocessed/controls/numpy_compressed_sensing'
 
-    elif train_test == 'test':
+    elif ((train_test == 'test') and (not only_compressed_sensing)):
         seg_path = basepath + f'/final_segmentations/test'
         img_path = basepath + f'/preprocessed/patients/numpy'
         img_path_compressed = basepath + f'/preprocessed/patients/numpy_compressed_sensing'
         img_paths = [img_path, img_path_compressed]
+    elif ((['train', 'val'].__contains__(train_test)) and (only_compressed_sensing)):
+        seg_path = basepath + f'/final_segmentations/train_val_compressed_sensing'
+    
+    elif ((train_test == 'test') and (only_compressed_sensing)):
+        seg_path = basepath + f'/final_segmentations/test_compressed_sensing'
+        
     else:
         raise ValueError('train_test must be either train, val or test')
 
-    non_cs_img_path_controls = basepath + f'/preprocessed/controls/numpy'
-    non_cs_img_path_patients = basepath + f'/preprocessed/patients/numpy'
 
 
+    if only_compressed_sensing:
+        # Use only paths with compressed sensing data
+        img_paths_controls = [basepath + f'/preprocessed/controls/numpy_compressed_sensing']
+        img_paths_patients = [basepath + f'/preprocessed/patients/numpy_compressed_sensing']
+    else:
+        # Original behavior, possibly including both types of data
+        img_paths_controls = [basepath + f'/preprocessed/controls/numpy']
+        img_paths_patients = [basepath + f'/preprocessed/patients/numpy']
+        if include_compressed_sensing:
+            img_paths_controls.append(basepath + f'/preprocessed/controls/numpy_compressed_sensing')
+            img_paths_patients.append(basepath + f'/preprocessed/patients/numpy_compressed_sensing')
 
-    img_paths_controls = [basepath + f'/preprocessed/controls/numpy', basepath + f'/preprocessed/controls/numpy_compressed_sensing']
-    img_paths_patients = [basepath + f'/preprocessed/patients/numpy', basepath + f'/preprocessed/patients/numpy_compressed_sensing']
 
 
     # Paths for non compressed sensing data
@@ -709,20 +724,19 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # Filter based on the include_compressed_sensing flag
     filtered_seg_path_files = []
     for file in seg_path_files:
-        # Remove 'seg_' prefix to get the corresponding image file name
         corresponding_img_file = file.replace('seg_', '')
-        
-        # Check if the file exists in either non-compressed sensing image path
-        file_exists_in_non_cs_controls = os.path.exists(os.path.join(non_cs_img_path_controls, corresponding_img_file))
-        file_exists_in_non_cs_patients = os.path.exists(os.path.join(non_cs_img_path_patients, corresponding_img_file))
 
-        # Include file based on the include_compressed_sensing flag and existence in non-CS paths
-        if include_compressed_sensing or (not include_compressed_sensing and (file_exists_in_non_cs_controls or file_exists_in_non_cs_patients)):
+        # Check for file existence based on the selected paths
+        file_exists = any(os.path.exists(os.path.join(path, corresponding_img_file)) 
+                        for path in (img_paths_controls + img_paths_patients))
+
+        if file_exists:
             filtered_seg_path_files.append(file)
 
     # Use the filtered list for further processing
     patients = filtered_seg_path_files[idx_start:idx_end]
     num_images_to_load = len(patients)
+
 
     
     #patients = seg_path_files[idx_start:idx_end]
@@ -844,21 +858,24 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         else:
             points = points[np.where(points[:,1]<65)]
             points = points[np.where(points[:,0]<90)]
+            points = points[points[:,0].argsort()[::-1]]
+
         
-        points = points[2:-2]
-        points = points[points[:,0].argsort()[::-1]]
+        #points = points[2:-2]
+        #points = points[points[:,0].argsort()[::-1]]
         
         
 
         if skip:
             temp = []
-            for index, element in enumerate(points):
+            #for index, element in enumerate(points):
+            for index, element in enumerate(points[2:]):
                 if (index%2)==0:
                     temp.append(element)
 
             coords = np.array(temp)
         else:
-            coords = np.array(points)    
+            coords = np.array(points[2:])    
 
         #===========================================================================================
         # Parameters for the interpolation and creation of the files
@@ -938,7 +955,8 @@ def load_masked_data_sliced(basepath,
               train_test,
               force_overwrite=False,
               load_anomalous=False,
-              include_compressed_sensing=True,              
+              include_compressed_sensing=True,      
+              only_compressed_sensing = False,        
               suffix ='',
               updated_ao = False,
               skip = True,
@@ -962,6 +980,7 @@ def load_masked_data_sliced(basepath,
                                train_test = train_test,
                                load_anomalous= load_anomalous,
                                include_compressed_sensing=include_compressed_sensing,
+                               only_compressed_sensing=only_compressed_sensing,
                                suffix = suffix,
                                 updated_ao = updated_ao,
                                 skip = skip,
@@ -1504,12 +1523,18 @@ if __name__ == '__main__':
     # Make sure that any patient from the training/validation set is not in the test set
     verify_leakage()
 
-    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite=False, skip = True, updated_ao = True, smoothness = 10)
-    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)    
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=41, train_test='train', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=10, train_test='train', suffix = '_without_rotation_only_cs_skip_updated_ao_S10', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation_all = load_masked_data_sliced(basepath, idx_start=41, idx_end=51, train_test='val', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation_only_cs = load_masked_data_sliced(basepath, idx_start=10, idx_end=14, train_test='val', suffix = '_without_rotation_only_cs_skip_updated_ao_S10', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite=False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=54, train_test='test', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=17, train_test='test', suffix = '_without_rotation_only_cs_skip_updated_ao_S10', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)    
-    masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs', include_compressed_sensing = False, force_overwrite= False)    
     #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=48, train_test='train', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite=False)
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=48, idx_end=58, train_test='val', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite= True)
@@ -1517,6 +1542,11 @@ if __name__ == '__main__':
     #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=46, train_test='test', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite= False)
     #masked_sliced_data_test_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=8, train_test='test', suffix='_compressed_sensing')    
 
+    # This was experimental with instead of having zeros in the slices, we remove the subjects for which preprocessing ao didn't work
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='train', suffix = '_without_some_data_redid_other_version__without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=34, idx_end=41, train_test='val', suffix = '_without_some_data_redid_other_version__without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+
+    # Old things
     #masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
     #masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
     #masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test')
