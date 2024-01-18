@@ -13,7 +13,6 @@ import h5py
 import glob
 import random
 import logging
-import seaborn as sns
 import pandas as pd
 import datetime
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +32,7 @@ basepath =  sys_config.project_data_root
 from models.vae import VAE, VAE_convT, VAE_linear
 from models.condconv import CondVAE, CondConv
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/helpers')
-from batches import plot_batch_3d_complete, plot_batch_3d_complete_1_chan
+
 
 
 # Download the methods for generating synthetic data
@@ -58,7 +57,7 @@ from helpers.visualization import plot_batches_SSL, plot_batches_SSL_in_out
 
 
 
-seed = 0  # you can set to your preferred seed
+seed = 42  # you can set to your preferred seed
 torch.manual_seed(seed)
 if torch.cuda.is_available():
     torch.cuda.manual_seed(seed)
@@ -69,101 +68,131 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 
+# ========================================================  
+# ==================== LOGGING CONFIG ====================
+# ========================================================
 
+project_data_root = config_sys.project_data_root
+project_code_root = config_sys.project_code_root
+
+current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+
+# Adjusting the plot size
+plt.rcParams['figure.figsize'] = [10, 6]
+
+# Adjusting the font size
+plt.rcParams['font.size'] = 14
+plt.rcParams['axes.labelsize'] = 14
+plt.rcParams['xtick.labelsize'] = 12
+plt.rcParams['ytick.labelsize'] = 12
+
+# Adjusting line width
+plt.rcParams['lines.linewidth'] = 1.3
+# Adjusting the title size
+plt.rcParams['axes.titlesize'] = 16
+
+# Setting a colorblind-friendly color palette
+#plt.rcParams['axes.prop_cycle'] = plt.cycler(color=plt.cm.Set3.colors)
+# Setting a custom color palette
+color_list = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+plt.rcParams['axes.prop_cycle'] = plt.cycler(color=color_list)
+
+models_dir = "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs"
+list_of_experiments_run1 = [
+'cond_vae/masked_slice/20230722-0851_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_without_noise_cube_3',
+'cond_vae/masked_slice/20230721-1938_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training_2Dslice_without_noise_cube_3',
+'cond_vae/masked_slice/20230721-1021_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230721-1018_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230721-1011_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_reproducibility_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230721-1008_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230721-0835_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100',
+'vae_convT/masked_slice/20230720-1837_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230720-1729_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230720-1726_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230720-0851_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_without_noise_cube_3',
+'vae_convT/masked_slice/20230720-0847_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_2Dslice_without_noise_cube_3',
+'vae_convT/masked_slice/20230720-0841_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_2Dslice',
+'vae_convT/masked_slice/20230720-0834_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230719-1850_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230719-1833_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230719-1830_vae_convT_masked_slice_lr1.000e-03-e3000-bs8-gf_dim8-daFalse-f100',
+'vae_convT/masked_slice/20230719-1828_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230719-1826_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100',
+'vae_convT/masked_slice/20230719-1821_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100'
+]
+
+list_of_best_experiments_run1 = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100",
+                                    "vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3",
+                                    "cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
+
+
+list_of_experiments_seeds = [
+'vae_convT/masked_slice/20230729-1647_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230729-1010_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_25_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230729-0959_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_25',
+'vae_convT/masked_slice/20230729-0153_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230728-2259_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_20',
+'cond_vae/masked_slice/20230728-1239_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_20_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230728-1236_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_25',
+'cond_vae/masked_slice/20230728-1220_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_20',
+'cond_vae/masked_slice/20230728-1217_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_15',
+'cond_vae/masked_slice/20230728-1214_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_10',
+'cond_vae/masked_slice/20230728-1211_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_5',
+'vae_convT/masked_slice/20230727-0855_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_15',
+'vae_convT/masked_slice/20230727-0846_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230727-0153_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_15_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230726-0849_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230726-0825_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_10_2Dslice_decreased_interpolation_factor_cube_3',
+'vae_convT/masked_slice/20230726-0825_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_10',
+'vae_convT/masked_slice/20230726-0818_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_5',
+'vae_convT/masked_slice/20230725-2010_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_2Dslice_decreased_interpolation_factor_cube_3',
+'cond_vae/masked_slice/20230725-2010_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_5_2Dslice_decreased_interpolation_factor_cube_3'
+]
+one_run = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100"]
+
+list_of_experiments_run2 = ['vae_convT/masked_slice/20230729-0153_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3']
+
+
+list_of_experiments_with_rotation = ['vae_convT/masked_slice/20231123-1141_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_5',
+                                        'vae_convT/masked_slice/20231123-1137_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20231123-1137_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_20',
+                                        'vae_convT/masked_slice/20231123-1133_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_2Dslice_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20231126-1055_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20231126-1058_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_10',
+                                        'vae_convT/masked_slice/20231126-1059_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_15',
+                                        'vae_convT/masked_slice/20231126-1102_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_2Dslice_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20231126-1105_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_25',
+                                        'vae_convT/masked_slice/20231126-1107_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_2Dslice_decreased_interpolation_factor_cube_3',
+
+                                        ]
+
+
+                                        
+list_of_experiments_with_rotation_w_cs = ['vae_convT/masked_slice/20231126-1915_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_25_cs',
+                                            'vae_convT/masked_slice/20231126-2051_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_2Dslice_decreased_interpolation_factor_cube_3_cs',
+                                            'vae_convT/masked_slice/20231126-2055_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_20_cs',
+                                            'vae_convT/masked_slice/20231127-0933_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3_cs',
+                                            'vae_convT/masked_slice/20231127-1400_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_2Dslice_decreased_interpolation_factor_cube_3_cs',
+                                            'vae_convT/masked_slice/20231127-1736_vae_convT_masked_slice_lr1.000e-03-e1200-bs8-gf_dim8-daFalse-f100__SEED_15_cs',
+                                            'vae_convT/masked_slice/20231127-1403_vae_convT_masked_slice_lr1.000e-03-e1200-bs8-gf_dim8-daFalse-f100__SEED_15_cs']
+
+
+
+list_of_experiments_with_and_without_rotation_without_cs = ['vae_convT/masked_slice/20231129-2127_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice__with_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231129-2131_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_2Dslice__with_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231130-1148_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_2Dslice__with_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231130-1151_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice__with_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231129-2121_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_2Dslice__without_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231129-2125_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice__without_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231130-1153_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_2Dslice__without_rotation_without_cs_decreased_interpolation_factor_cube_3',
+                                    'vae_convT/masked_slice/20231130-1311_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice__without_rotation_without_cs_decreased_interpolation_factor_cube_3']
+list_of_experiments_paths = list_of_experiments_with_and_without_rotation_without_cs
 
 
 if __name__ == '__main__':
-
-    # Adjusting the plot size
-    plt.rcParams['figure.figsize'] = [10, 6]
-
-    # Adjusting the font size
-    plt.rcParams['font.size'] = 14
-    plt.rcParams['axes.labelsize'] = 14
-    plt.rcParams['xtick.labelsize'] = 12
-    plt.rcParams['ytick.labelsize'] = 12
-
-    # Adjusting line width
-    plt.rcParams['lines.linewidth'] = 1.3
-    # Adjusting the title size
-    plt.rcParams['axes.titlesize'] = 16
-
-    # Setting a colorblind-friendly color palette
-    #plt.rcParams['axes.prop_cycle'] = plt.cycler(color=plt.cm.Set3.colors)
-    # Setting a custom color palette
-    color_list = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
-    plt.rcParams['axes.prop_cycle'] = plt.cycler(color=color_list)
-    
-    models_dir = "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs"
-    list_of_experiments_run1 = [
-    'cond_vae/masked_slice/20230722-0851_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_without_noise_cube_3',
-    'cond_vae/masked_slice/20230721-1938_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training_2Dslice_without_noise_cube_3',
-    'cond_vae/masked_slice/20230721-1021_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230721-1018_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230721-1011_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_reproducibility_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230721-1008_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230721-0835_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100',
-    'vae_convT/masked_slice/20230720-1837_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230720-1729_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230720-1726_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_with_interpolation_training_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230720-0851_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_without_noise_cube_3',
-    'vae_convT/masked_slice/20230720-0847_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_2Dslice_without_noise_cube_3',
-    'vae_convT/masked_slice/20230720-0841_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_2Dslice',
-    'vae_convT/masked_slice/20230720-0834_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230719-1850_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_poisson_mix_training_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230719-1833_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230719-1830_vae_convT_masked_slice_lr1.000e-03-e3000-bs8-gf_dim8-daFalse-f100',
-    'vae_convT/masked_slice/20230719-1828_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230719-1826_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100',
-    'vae_convT/masked_slice/20230719-1821_vae_convT_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100'
-]
-
-    list_of_best_experiments_run1 = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100",
-                                     "vae_convT/masked_slice/20230719-1840_vae_convT_masked_slice_SSL_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse_2Dslice_decreased_interpolation_factor_cube_3",
-                                     "cond_vae/masked_slice/20230721-1002_cond_vae_masked_slice_SSL_lr1.800e-03_scheduler-e1500-bs8-gf_dim8-daFalse-n_experts3_2Dslice_decreased_interpolation_factor_cube_3"]
-    
-
-    list_of_experiments_seeds = [
-    'vae_convT/masked_slice/20230729-1647_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230729-1010_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_25_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230729-0959_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_25',
-    'vae_convT/masked_slice/20230729-0153_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230728-2259_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_20',
-    'cond_vae/masked_slice/20230728-1239_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_20_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230728-1236_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_25',
-    'cond_vae/masked_slice/20230728-1220_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_20',
-    'cond_vae/masked_slice/20230728-1217_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_15',
-    'cond_vae/masked_slice/20230728-1214_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_10',
-    'cond_vae/masked_slice/20230728-1211_cond_vae_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100-n_experts3__SEED_5',
-    'vae_convT/masked_slice/20230727-0855_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_15',
-    'vae_convT/masked_slice/20230727-0846_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230727-0153_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_15_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230726-0849_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230726-0825_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_10_2Dslice_decreased_interpolation_factor_cube_3',
-    'vae_convT/masked_slice/20230726-0825_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_10',
-    'vae_convT/masked_slice/20230726-0818_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100__SEED_5',
-    'vae_convT/masked_slice/20230725-2010_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_2Dslice_decreased_interpolation_factor_cube_3',
-    'cond_vae/masked_slice/20230725-2010_cond_vae_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-n_experts3__SEED_5_2Dslice_decreased_interpolation_factor_cube_3'
-]
-    one_run = ["vae_convT/masked_slice/20230719-1823_vae_convT_masked_slice_lr1.500e-03_scheduler-e1500-bs8-gf_dim8-daFalse-f100"]
-
-    list_of_experiments_run2 = ['vae_convT/masked_slice/20230729-0153_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_2Dslice_decreased_interpolation_factor_cube_3']
-
-    list_of_experiments_paths = list_of_experiments_run2
-
-    
-
-    # ========================================================  
-    # ==================== LOGGING CONFIG ====================
-    # ========================================================
-
-    project_data_root = config_sys.project_data_root
-    project_code_root = config_sys.project_code_root
-
-    current_time = datetime.datetime.now().strftime("%Y%m%d-%H%M")
 
     
     # Pick same random images
@@ -171,7 +200,7 @@ if __name__ == '__main__':
     # Batch size
     batch_size = 16
     adjacent_batch_slices = None
-    actions = ["visualize"] # ["visualize", ]
+    actions = [""] # ["visualize", ]
 
     data_to_visualize = ["test"]  # ["validation", "test"] 
 
@@ -182,10 +211,12 @@ if __name__ == '__main__':
     # if we select idx_end_ts =20 then we look at the first batch recevied with 7 cases and 13 controls\
     
     idx_start_ts = 0
-    #idx_end_ts = 34
-    idx_end_ts = 8
+    idx_end_ts = 34
+    idx_start_val = 35
+    idx_end_val = 42
+    #idx_end_ts = 8
     suffix = ''
-    compressed_sensing = True
+    compressed_sensing = False
 
     if compressed_sensing:
         suffix = '_compressed_sensing'
@@ -195,27 +226,20 @@ if __name__ == '__main__':
     
     deformation_list = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing'] 
 
-    """
-    # Create dictionary to map the current test subjects to their ID
-    test_subjects_dict = {0: "MACDAVD_201_", 1: "MACDAVD_202_", 2: "MACDAVD_203_", 3: "MACDAVD_301_", 4: "MACDAVD_302_", 5: "MACDAVD_303_", 6: "MACDAVD_304_",
-                          7: "MACDAVD_125_", 8: "MACDAVD_127_", 9: "MACDAVD_129_", 10: "MACDAVD_131_", 11: "MACDAVD_133_", 12: "MACDAVD_139_", 13: "MACDAVD_141_",
-                          14: "MACDAVD_143_", 15: "MACDAVD_145_", 16: "MACDAVD_121_", 17:"MACDAVD_137_", 18: "MACDAVD_123_", 19: "MACDAVD_135_", 20: "MACDAVD_206_",
-                          21: "MACDAVD_208_", 22: "MACDAVD_209_", 23: "MACDAVD_311_", 24:"MACDAVD_404_", 25:"MACDAVD_156_", 26: "MACDAVD_157_", 27: "MACDAVD_158_",
-                          28: "MACDAVD_159_", 29: "MACDAVD_160_", 30: "MACDAVD_161_",31: "MACDAVD_163_", 32: "MACDAVD_164_", 33: "MACDAVD_165_"}
-
-    if compressed_sensing:
-        test_subjects_dict = {0: "MACDAVD_204_", 1: "MACDAVD_205_", 2: "MACDAVD_305_", 3: "MACDAVD_306_", 4: "MACDAVD_307_", 5: "MACDAVD_308_", 6: "MACDAVD_309_",
-                          7: "MACDAVD_310_"}
-    """
     #noise_generator = generate_noise(batch_size = batch_size,mean_range = (0, 0.1), std_range = (0, 0.2), n_samples= images_healthy_unseen.shape[0]) 
 
     for model_rel_path in list_of_experiments_paths:
 
         model_path = os.path.join(models_dir, model_rel_path)
+        
+
         pattern = os.path.join(model_path, "*best*")
+        
         best_model_path = glob.glob(pattern)[0]
+        
 
         model_str = model_rel_path.split("/")[0]
+        
         preprocess_method = model_rel_path.split("/")[1]
         model_name = model_rel_path.split("/")[-1]
         # Several things
@@ -224,16 +248,28 @@ if __name__ == '__main__':
         #3. Remove indices which were used for training
 
         # We need to adapt the synthetic validation data based on preprocess_method as well as the spatial z and the model used
-        if model_name.__contains__('without_noise_cube_3'):
+        anomaly_name_ext = model_name.split('slice_')[-1]
+        name_extension = anomaly_name_ext.split('_decreased_interpolation_factor_cube_3')[0]
+        
+        if name_extension.__contains__('_without_rotation_without_cs_decreased_interpolation_factor_cube_3') or name_extension.__contains__('_without_rotation_without_cs'):
+            logging.info(f"----------------------- USING WITHOUT/WITH ROTATION -----------------------")
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=idx_start_val, idx_end=idx_end_val, sys_config = config_sys, note = anomaly_name_ext)
+            images_vl  = data_vl['images']
+            labels_vl = data_vl['masks']
+            deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+            validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
+
+
+        elif model_name.__contains__('without_noise_cube_3'):
             synthetic_data_note = 'without_noise_cube_3'
-            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=idx_start_val, idx_end=idx_end_val, sys_config = config_sys, note = synthetic_data_note)
             images_vl  = data_vl['images']
             labels_vl = data_vl['masks']
             deformation_list_validation_set = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
             validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
         elif model_name.__contains__('without_noise'):
             synthetic_data_note = 'without_noise'
-            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=idx_start_val, idx_end=idx_end_val, sys_config = config_sys, note = synthetic_data_note)
             images_vl  = data_vl['images']
             labels_vl = data_vl['masks']
             deformation_list_validation_set = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
@@ -241,22 +277,23 @@ if __name__ == '__main__':
         elif model_name.__contains__('decreased_interpolation_factor_cube_3'):
             synthetic_data_note = 'decreased_interpolation_factor_cube_3'
             deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=idx_start_val, idx_end=idx_end_val, sys_config = config_sys, note = synthetic_data_note)
             images_vl  = data_vl['images']
             labels_vl = data_vl['masks']
             validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
         elif model_name.__contains__('decreased_interpolation_factor'):
             synthetic_data_note = 'decreased_interpolation_factor'
             deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=idx_start_val, idx_end=idx_end_val, sys_config = config_sys, note = synthetic_data_note)
             images_vl  = data_vl['images']
             labels_vl = data_vl['masks']
+            deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
             validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
         else:
             synthetic_data_note = ''
             deformation_list_validation_set = ['None', 'noisy', 'deformation', 'hollow_circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
             
-            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=35, idx_end=42, sys_config = config_sys, note = synthetic_data_note)
+            data_vl = load_syntetic_data(preprocess_method =preprocess_method, idx_start=idx_start_val, idx_end=idx_end_val, sys_config = config_sys, note = synthetic_data_note)
             images_vl  = data_vl['images']
             labels_vl = data_vl['masks']
             validation_indexes, deformation_list_validation_set = return_indexes_to_remove(model_name, deformation_list_validation_set, images_vl, with_noise = False)
@@ -273,7 +310,7 @@ if __name__ == '__main__':
             logging.info(f"----------------------- USING INITIAL BATCH -----------------------")
 
         # Please note the test labels are just a mask of ones for sick patients and zero for healthy
-        _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_vl=35, idx_end_vl=42,idx_start_ts=idx_start_ts, idx_end_ts=idx_end_ts, with_test_labels= True, suffix = suffix)
+        _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_vl=35, idx_end_vl=42,idx_start_ts=idx_start_ts, idx_end_ts=idx_end_ts, with_test_labels= True, suffix = name_extension)
 
         # Create dictionary to map the current test subjects to their ID
         seg_path = basepath + f'/final_segmentations/test{suffix}'
@@ -382,11 +419,11 @@ if __name__ == '__main__':
 
 
         if "validation" in data_to_visualize:
-            # We have 7 patients in the validation set with 7 (or less) deformations and 64 slices each
+            # We have n_val_patients patients in the validation set with 7 (or less) deformations and 64 slices each
             
             n_def = len(deformation_list_validation_set)
 
-            n_val_patients = 7
+            n_val_patients = idx_end_val - idx_start_val
             results_dir_val = results_dir + '/' + 'validation'
             make_dir_safely(results_dir_val)
             all_anomaly_scores = []
@@ -481,7 +518,7 @@ if __name__ == '__main__':
             if self_supervised:
                 # [#patients, #slices, # channel, 32, 32, 24]
                 all_masks = all_masks[:,:,0:1,:,:,:]
-            validation_metrics(all_anomaly_scores, all_masks)
+            validation_metrics(all_anomaly_scores, all_masks, results_dir = results_dir)
 
             
 
@@ -500,7 +537,7 @@ if __name__ == '__main__':
                 logging.info('***********************************************************************************************************')
                 logging.info(f"Deformation: {deformation}")
                 logging.info('***********************************************************************************************************')
-                validation_metrics(all_anomaly_scores_def, all_masks_def, deformation)
+                validation_metrics(all_anomaly_scores_def, all_masks_def, deformation, results_dir = results_dir)
 
 
         # Visualize the predictions on the test set (no artificial deformations)
@@ -667,9 +704,10 @@ if __name__ == '__main__':
             logging.info('============================================================')
             logging.info('Computing AUC-ROC score...')
             logging.info('============================================================')
-            compute_auc(healthy_scores, anomalous_scores, results_dir, format_wise= "patient_wise", agg_function=np.mean)
-            compute_auc(healthy_scores, anomalous_scores, results_dir, format_wise= "imagewise", agg_function=np.mean)
-            compute_auc(healthy_scores, anomalous_scores, results_dir, format_wise= "2Dslice", agg_function=np.mean)
+            #def compute_auc(healthy_scores, anomalous_scores, results_dir, format_wise= "2Dslice", agg_function = np.mean, data = "test", deformation = None):
+            compute_auc(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores, results_dir = results_dir, format_wise= "patient_wise", agg_function=np.mean)
+            compute_auc(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores, results_dir = results_dir, format_wise= "imagewise", agg_function=np.mean)
+            compute_auc(healthy_scores = healthy_scores, anomalous_scores = anomalous_scores, results_dir = results_dir, format_wise= "2Dslice", agg_function=np.mean)
             logging.info('============================================================')
             # Compute average Precision
             logging.info('============================================================')
