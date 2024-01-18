@@ -22,7 +22,7 @@ from helpers.run import train, load_model, evaluate
 from helpers.data_loader import load_data, load_syntetic_data
 
 
-SEED = 25
+SEED = 15
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 torch.cuda.manual_seed_all(SEED)
@@ -117,11 +117,18 @@ if __name__ ==  "__main__":
         tag = 'reconstruction'
 
     if config['use_synthetic_validation']:
-        tags = [config['model'], 'synthetic_validation', 'various_SEED', config['validation_metric_format']]
+        tags = [config['model'], 'synthetic_validation', f"{SEED}", config['validation_metric_format']]
         tags.append(tag)
     else:
-        tags = [config['model'], 'various_SEED']
+        tags = [config['model'], f"{SEED}"]
         tags.append(tag)
+
+    # Check in config file if we include compressed sensing data
+    if config['with_compressed_sensing']:
+        tags.append('with_compressed_sensing')
+        config['model_name'] = config['model_name'] + '_cs'
+
+    
     with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
         config = wandb.config
         print('after_init', config['model_name'])
@@ -152,7 +159,7 @@ if __name__ ==  "__main__":
         verify_leakage()
 
         # Load the data
-        images_tr, images_vl, _ = load_data(config, config_sys, idx_start_tr=config['idx_start_tr'], idx_end_tr=config['idx_end_tr'], idx_start_vl=config['idx_start_vl'], idx_end_vl=config['idx_end_vl'])
+        images_tr, images_vl, _ = load_data(config, config_sys, idx_start_tr=config['idx_start_tr'], idx_end_tr=config['idx_end_tr'], idx_start_vl=config['idx_start_vl'], idx_end_vl=config['idx_end_vl'], suffix = config['suffix_data'])
 
         # Load synthetic data for validation if needed
         if config['use_synthetic_validation']:
@@ -207,11 +214,7 @@ if __name__ ==  "__main__":
     
         input_dict= {'input_images': torch.zeros((1, 4, 32, 32, 24)).to(device).float(), 'batch_z_slice': torch.zeros((1,)).to(device).float(), 'adjacent_batch_slices':torch.zeros((1, 12, 32, 32, 24)).to(device)}
         logging.info(summary(model, input_dict, show_input=False))
-        
-        
-        
-        
-        
+
         
         # Train 
         optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'], betas=(config['beta1'], config['beta2']))
