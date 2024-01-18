@@ -8,14 +8,17 @@ import wandb
 import matplotlib
 from matplotlib import pyplot as plt
 
+import sys
+sys.path.append("/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/helpers")
+
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 # =================================================================================
 # ============== HELPER FUNCTIONS =============================================
+
+from utils import compute_losses_VAE, make_dir_safely, apply_blending
 from batches import iterate_minibatches
-from utils import compute_losses_VAE, make_dir_safely, compute_losses_TVAE, compute_losses_MMDVAE \
-    , apply_blending
 from metrics import compute_auc_roc_score, compute_average_precision_score
 from synthetic_anomalies import create_cube_mask, create_cube_mask_4D
 
