@@ -13,7 +13,7 @@ import h5py
 # ==================================================================
 # Load the data
 # ==================================================================
-def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8, idx_start_ts = 0, idx_end_ts = 2, with_test_labels = False, suffix = ''):
+def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8, idx_start_ts = 0, idx_end_ts = 1, with_test_labels = False, suffix = ''):
     """
     Load the data from the numpy files and preprocess it according to the config file.
     
@@ -163,6 +163,7 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_start=idx_start_ts,
                                                                                 idx_end=idx_end_ts,
                                                                                 train_test='test',
+                                                                                suffix = suffix,
                                                                                 )
         
         images_ts = data_ts['sliced_images_test']
@@ -184,6 +185,7 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_start=idx_start_tr,
                                                                                 idx_end=idx_end_tr,
                                                                                 train_test='train',
+                                                                                suffix = suffix,
                                                                                 )
         
         images_tr = data_tr['sliced_images_train']
@@ -197,12 +199,15 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_start=idx_start_vl,
                                                                                 idx_end=idx_end_vl,
                                                                                 train_test='val',
+                                                                                suffix=suffix,
                                                                                 )
         
         images_vl = data_vl['sliced_images_val']
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
         logging.info('=============================================================================')
+        
 
+        logging.info('Loading test data from: {}'.format(sys_config.project_data_root))
         data_ts = data_bern_numpy_to_preprocessed_hdf5.load_masked_data_sliced(basepath=sys_config.project_data_root,
                                                                                 idx_start=idx_start_ts,
                                                                                 idx_end=idx_end_ts,
@@ -213,6 +218,9 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
         images_ts = data_ts['sliced_images_test']
         if with_test_labels:
                 labels_ts = data_ts['labels_test']
+
+        logging.info('Shape of test images: %s' %str(images_ts.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
+        logging.info('=============================================================================')
 
     
     # ================================================
@@ -339,5 +347,7 @@ def load_syntetic_data(preprocess_method,
         raise ValueError(f"Dataset {dataset_filepath} does not exist. Go to syntehtic_anomalies.py in helpers to generate the file")
     else:
         print('Already preprocessed this configuration. Loading now...')
+        # Name of file
+        logging.info('Loading data from: {}'.format(dataset_filepath))
     
     return h5py.File(dataset_filepath, 'r')
