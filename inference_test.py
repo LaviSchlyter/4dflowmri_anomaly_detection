@@ -1,5 +1,5 @@
 # In this we evaluate the model on the test set and save the results
-
+import matplotlib.pyplot as plt
 import os
 import h5py
 import sys
@@ -8,7 +8,7 @@ import numpy as np
 import random
 from config import system_eval as config_sys
 from helpers.data_loader import load_data
-from models.vae import VAE_convT
+from models.vae import VAE_convT, ConvWithAux, ConvWithEncDecAux
 
 import torch
 
@@ -30,12 +30,57 @@ random.seed(seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+# Adjusting the plot size
+plt.rcParams['figure.figsize'] = [10, 6]
+
+# Adjusting the font size
+plt.rcParams['font.size'] = 14
+plt.rcParams['axes.labelsize'] = 14
+plt.rcParams['xtick.labelsize'] = 12
+plt.rcParams['ytick.labelsize'] = 12
+
+# Adjusting line width
+plt.rcParams['lines.linewidth'] = 1.3
+# Adjusting the title size
+plt.rcParams['axes.titlesize'] = 16
+
+# Setting a colorblind-friendly color palette
+#plt.rcParams['axes.prop_cycle'] = plt.cycler(color=plt.cm.Set3.colors)
+# Setting a custom color palette
+color_list = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+plt.rcParams['axes.prop_cycle'] = plt.cycler(color=color_list)
+
+
 idx_start_ts = 0
 idx_end_ts = 34
-idx_start_val = 35
-idx_end_val = 42
 
 models_dir = "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs"
+data_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/final_segmentations'
+
+def filter_subjects(data_path, experiment_name):
+    # Paths to compressed sensing data directories
+    cs_controls_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/preprocessed/controls/dicom_compressed_sensing'
+    cs_patients_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/preprocessed/patients/dicom_compressed_sensing'
+
+    # Get all subject names and remove the .npy extension
+    test_names = [os.path.splitext(name)[0].split('seg_')[1] for name in os.listdir(data_path + '/test')]
+    test_names.sort()
+
+    # Get the list of compressed sensing subjects and remove the .npy extension
+    cs_subjects_controls = set(os.path.splitext(name)[0] for name in os.listdir(cs_controls_path))
+    cs_subjects_patients = set(os.path.splitext(name)[0] for name in os.listdir(cs_patients_path))
+    cs_subjects = cs_subjects_controls.union(cs_subjects_patients)
+
+    # Filter subjects based on experiment requirements
+    if 'without_cs' in experiment_name:
+        filtered_names = [name for name in test_names if name not in cs_subjects]
+    elif 'only_cs' in experiment_name:
+        filtered_names = [name for name in test_names if name in cs_subjects]
+    else:
+        filtered_names = test_names
+
+    return filtered_names
+
 
 
 ############################################## INCORECT VALIDATION SET ##############################################
@@ -131,6 +176,9 @@ list_of_experiments_without_rotation = ['vae_convT/masked_slice/20231211-2124_va
 """
 
 ############################################## INCORECT VALIDATION SET ##############################################
+
+
+
 
 
 
@@ -318,12 +366,62 @@ list_of_experiments_without_rotation = [
 """
 idx_start_ts = 0
 idx_end_ts = 34
+
+
 ############################################## ONLY COMPRESSED SENSING ##############################################
 ## 7. ONLY COMPRESSED SENSING - WITH UPDATED ASCENDING AORTA - WITH ALL SUBJECTS (ANGLE CHANGE), NO ORDERING WITH ASCENDING AORTA ------------------------------------------ 
 ## Version  where we take angle 3/2 as thershold and then 1/2 if it does not work TO HAVE ALL SUBJECTS
 ## We do not remove the first and last 2 slices - but rather remove the two first only 
 ## We DO NOT order the points in ascending order - ONLY COMPRESSED SENSING
 
+"""
+list_of_experiments_with_rotation = ['conv_with_aux/masked_slice/20240212-1036_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1040_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1119_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1558_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1613_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+idx_start_ts = 0
+idx_end_ts = 17
+
+name_pre_extension = ['']
+
+
+list_of_experiments_without_rotation = ['conv_with_aux/masked_slice/20240212-1033_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1039_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1053_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1557_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1600_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+
+"""
+
+"""
+list_of_experiments_with_rotation = ['conv_with_aux/masked_slice/20240213-1552_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240213-1433_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240213-1017_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240213-0947_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1718_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+idx_start_ts = 0
+idx_end_ts = 17
+
+name_pre_extension = ['']
+
+
+list_of_experiments_without_rotation = ['conv_with_aux/masked_slice/20240213-1538_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240213-1454_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240213-1018_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240213-1011_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240212-1720_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+"""
+
+"""
 list_of_experiments_with_rotation = ['vae_convT/masked_slice/20240115-1928_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
                                      'vae_convT/masked_slice/20240115-1939_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
                                      'vae_convT/masked_slice/20240115-1945_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
@@ -341,37 +439,204 @@ list_of_experiments_without_rotation = ['vae_convT/masked_slice/20240116-1100_va
                                         'vae_convT/masked_slice/20240116-1050_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
 
 
+"""
 
+
+#############
+
+# THE SEEDS HAVE BEEN FIXED
+
+
+"""
+list_of_experiments_with_rotation = ['vae_convT/masked_slice/20240214-1610_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240214-1613_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240214-1615_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240214-1617_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240214-1622_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+name_pre_extension = ['']# This is the true thing
+idx_start_ts = 0
+idx_end_ts = 17
+
+list_of_experiments_without_rotation = ['vae_convT/masked_slice/20240215-0858_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240215-0901_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240215-0906_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240215-0910_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240215-0914_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+"""
+
+"""
+list_of_experiments_with_rotation =    ['conv_with_aux/masked_slice/20240214-1119_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1120_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1123_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1125_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1128_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+idx_start_ts = 0
+idx_end_ts = 17
+
+name_pre_extension = ['']
+
+
+list_of_experiments_without_rotation = ['conv_with_aux/masked_slice/20240214-1214_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1216_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1217_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1219_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240214-1433_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+
+"""
+"""
+
+list_of_experiments_with_rotation =    ['conv_enc_dec_aux/masked_slice/20240215-0930_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240215-0957_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240218-1218_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240218-1221_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240218-1223_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+idx_start_ts = 0
+idx_end_ts = 17
+
+name_pre_extension = ['']
+
+
+list_of_experiments_without_rotation = ['conv_enc_dec_aux/masked_slice/20240218-1225_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240218-1226_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240227-1428_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240227-1429_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240227-1433_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_only_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+"""
+
+
+#############
+
+######################################### ALL DATA (includes compressed sensing) ##########################################
+## 8. ALL DATA - WITH UPDATED ASCENDING AORTA - WITH ALL SUBJECTS (ANGLE CHANGE), NO ORDERING WITH ASCENDING AORTA ------------------------------------------
+## Version  where we take angle 3/2 as thershold and then 1/2 if it does not work TO HAVE ALL SUBJECTS
+## We do not remove the first and last 2 slices - but rather remove the two first only
+## We DO NOT order the points in ascending order
+"""
+list_of_experiments_with_rotation = ['vae_convT/masked_slice/20240116-1803_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240116-1808_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240116-1830_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240117-0835_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240118-1021_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+name_pre_extension = ['']# This is the true thing
+idx_start_ts = 0
+idx_end_ts = 54
+
+
+list_of_experiments_without_rotation = ['vae_convT/masked_slice/20240118-1028_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240118-1040_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240118-1108_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240119-1757_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240119-1812_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+"""
+
+#############
+
+# THE SEEDS HAVE BEEN FIXED - ALL DATA
+"""
+list_of_experiments_with_rotation = ['vae_convT/masked_slice/20240218-1233_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240218-1236_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240218-1237_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240218-1240_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'vae_convT/masked_slice/20240218-1242_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+name_pre_extension = ['']# This is the true thing
+idx_start_ts = 0
+idx_end_ts = 54
+
+
+list_of_experiments_without_rotation = ['vae_convT/masked_slice/20240225-0800_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240225-0803_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240225-0808_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240225-0811_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'vae_convT/masked_slice/20240225-0828_vae_convT_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+"""
+
+
+"""
+list_of_experiments_with_rotation = ['conv_with_aux/masked_slice/20240225-0833_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_with_aux/masked_slice/20240225-0838_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_with_aux/masked_slice/20240225-2241_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_with_aux/masked_slice/20240225-2243_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_with_aux/masked_slice/20240225-2300_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+name_pre_extension = ['']# This is the true thing
+idx_start_ts = 0
+idx_end_ts = 54
+
+
+list_of_experiments_without_rotation = ['conv_with_aux/masked_slice/20240225-2310_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240225-2316_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240225-2318_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240225-2320_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_with_aux/masked_slice/20240225-2322_conv_with_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+"""
+
+list_of_experiments_with_rotation = ['conv_enc_dec_aux/masked_slice/20240226-1739_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_enc_dec_aux/masked_slice/20240226-1741_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_enc_dec_aux/masked_slice/20240226-1746_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_enc_dec_aux/masked_slice/20240226-1749_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                     'conv_enc_dec_aux/masked_slice/20240226-1834_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__with_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+name_pre_extension = ['']# This is the true thing
+idx_start_ts = 0
+idx_end_ts = 54
+
+
+list_of_experiments_without_rotation = ['conv_enc_dec_aux/masked_slice/20240226-1837_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240226-1845_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_10_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240226-1846_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_15_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240227-1414_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_20_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3',
+                                        'conv_enc_dec_aux/masked_slice/20240227-1417_conv_enc_dec_aux_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_25_poisson_mix_training_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_decreased_interpolation_factor_cube_3']
+
+
+
+##############
 
 ############################################## CORRECT VALIDATION SET ##############################################
 list_of_experiments_paths = list_of_experiments_with_rotation + list_of_experiments_without_rotation
+
+logging.info('list_of_experiments_paths: {}'.format(list_of_experiments_paths))
 
 if __name__ == '__main__':
     adjacent_batch_slices = None
     batch_size = 32 
     
     
-    for i, model_rel_path in enumerate(list_of_experiments_paths):
+    for i, exp_rel_path in enumerate(list_of_experiments_paths):
         logging.info('============================================================')
-        logging.info('Processing model: {}'.format(model_rel_path))
+        logging.info('Processing model: {}'.format(exp_rel_path))
         logging.info('============================================================')
-        model_path = os.path.join(models_dir, model_rel_path)
+        exp_path = os.path.join(models_dir, exp_rel_path)
         
 
-        pattern = os.path.join(model_path, "*best*")
+        pattern = os.path.join(exp_path, "*best*")
         
-        best_model_path = glob.glob(pattern)[0]
+        best_exp_path = glob.glob(pattern)[0]
         
 
-        model_str = model_rel_path.split("/")[0]
+        model_str = exp_rel_path.split("/")[0]
         
-        preprocess_method = model_rel_path.split("/")[1]
-        model_name = model_rel_path.split("/")[-1]
-        logging.info('name pre exntesion: {}'.format(name_pre_extension))
+        preprocess_method = exp_rel_path.split("/")[1]
+        exp_name = exp_rel_path.split("/")[-1]
+        logging.info('name pre extension: {}'.format(name_pre_extension))
 
 
         # Check if self-supervised or reconstruction based
-        if model_rel_path.__contains__('SSL'):
+        if exp_rel_path.__contains__('SSL'):
             model_type = 'self-supervised'
             in_channels = 4
             out_channels =1 
@@ -387,7 +652,7 @@ if __name__ == '__main__':
             name_extension = name_pre_extension[i]
         else:
             name_pre = name_pre_extension[0]
-            name_extension = name_pre + model_name.split('2Dslice_')[1].split('_decreased_interpolation_factor_cube_3')[0]
+            name_extension = name_pre + exp_name.split('2Dslice_')[1].split('_decreased_interpolation_factor_cube_3')[0]
         
         
         
@@ -395,10 +660,18 @@ if __name__ == '__main__':
         #name_extension = name_pre_extension[i]
         logging.info('name_extension: {}'.format(name_extension))
 
-        model = VAE_convT(in_channels=in_channels, out_channels=out_channels, gf_dim=8)
+        if exp_name.__contains__('vae_convT'):
+            model = VAE_convT(in_channels=in_channels, out_channels=out_channels, gf_dim=8)
+        elif exp_name.__contains__('conv_with_aux'):
+            model = ConvWithAux(in_channels=in_channels, out_channels=out_channels, gf_dim=8)
+        elif exp_name.__contains__('conv_enc_dec'):
+            model = ConvWithEncDecAux(in_channels=in_channels, out_channels=out_channels, gf_dim=8)
+
+        else:
+            raise ValueError('Exp name {} has no model recognized'.format(exp_name))
         # Load the model onto device
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        model.load_state_dict(torch.load(best_model_path, map_location=device))
+        model.load_state_dict(torch.load(best_exp_path, map_location=device))
         model.to(device)
         model.eval()
         
@@ -408,15 +681,24 @@ if __name__ == '__main__':
         healthy_idx = 0
         anomalous_idx = 0
         spatial_size_z = 64
-        preprocess_method = model_rel_path.split("/")[1]
+        preprocess_method = exp_rel_path.split("/")[1]
         config = {'preprocess_method': preprocess_method}
 
         
-        _, _, images_test, labels_test = load_data(sys_config=config_sys, config=config, idx_start_tr=0, idx_end_tr=1, idx_start_vl=0, idx_end_vl=1,idx_start_ts=idx_start_ts, idx_end_ts=idx_end_ts, with_test_labels= True, suffix = name_extension)
+        data_dict = load_data(sys_config=config_sys, config=config, idx_start_tr=0, idx_end_tr=1, idx_start_vl=0, idx_end_vl=1,idx_start_ts=idx_start_ts, idx_end_ts=idx_end_ts, with_test_labels= True, suffix = name_extension)
+        images_test = data_dict['images_test']
+        labels_test = data_dict['labels_test']
+        rotation_matrix = data_dict.get('rotation_test', None)
+        
+        # Get the names of the test subjects
+        test_names = filter_subjects(data_path, exp_rel_path)
 
-        test_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/final_segmentations/test'
-        test_names = os.listdir(test_path)
-        test_names.sort()
+        logging.info('============================================================')
+        # Print test names
+        logging.info('Test subjects: {}'.format(test_names))
+        logging.info('============================================================')
+
+
 
         subject_indexes = range(np.int16(images_test.shape[0]/spatial_size_z))
 
@@ -431,15 +713,21 @@ if __name__ == '__main__':
             subject_reconstruction = []
             subject_sliced = images_test[subject_idx*spatial_size_z:(subject_idx+1)*spatial_size_z]
             subject_labels = labels_test[subject_idx*spatial_size_z:(subject_idx+1)*spatial_size_z]
+            if rotation_matrix is not None:
+                rotation_matrix_subject = rotation_matrix[subject_idx*spatial_size_z:(subject_idx+1)*spatial_size_z]
             while end_idx <= spatial_size_z:
                 batch = subject_sliced[start_idx:end_idx]
                 labels = subject_labels[start_idx:end_idx]
                 batch_z_slice = torch.from_numpy(np.arange(start_idx, end_idx)).float().to(device)
                 batch = torch.from_numpy(batch).transpose(1,4).transpose(2,4).transpose(3,4).float().to(device)
+                rotation_matrix_batch = None
+                if rotation_matrix is not None:
+                    rotation_matrix_batch = rotation_matrix_subject[start_idx:end_idx]
+                    rotation_matrix_batch = torch.from_numpy(rotation_matrix_batch).to(device).float()
                 with torch.no_grad():
                     model.eval()
                     
-                    input_dict = {'input_images': batch, 'batch_z_slice':batch_z_slice, 'adjacent_batch_slices':adjacent_batch_slices}
+                    input_dict = {'input_images': batch, 'batch_z_slice':batch_z_slice, 'adjacent_batch_slices':adjacent_batch_slices,'rotation_matrix': rotation_matrix_batch}
                     output_dict = model(input_dict)
 
                     output_images = torch.sigmoid(output_dict['decoder_output'])
