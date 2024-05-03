@@ -13,7 +13,7 @@ import h5py
 # ==================================================================
 # Load the data
 # ==================================================================
-def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl = 5, idx_end_vl = 8, idx_start_ts = 0, idx_end_ts = 1, with_test_labels = False, suffix = ''):
+def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 1, idx_start_vl = 0, idx_end_vl = 1, idx_start_ts = 0, idx_end_ts = 1, with_test_labels = False, suffix = '', include_compressed_sensing = True, only_compressed_sensing = False):
     """
     Load the data from the numpy files and preprocess it according to the config file.
     
@@ -40,6 +40,11 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
     
     Returns
     -------"""
+
+    labels_ts = None
+    rotation_tr = None
+    rotation_vl = None
+    rotation_ts = None
     
     if config['preprocess_method'] == 'none':
 
@@ -51,6 +56,7 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                         idx_start=idx_start_tr, 
                                                         idx_end=idx_end_tr, 
                                                         train_test='train',
+
                                                         )
             
 
@@ -186,11 +192,15 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_end=idx_end_tr,
                                                                                 train_test='train',
                                                                                 suffix = suffix,
+                                                                                include_compressed_sensing=include_compressed_sensing,
+                                                                                only_compressed_sensing=only_compressed_sensing,
                                                                                 )
         
         images_tr = data_tr['sliced_images_train']
+        rotation_tr = data_tr['rotation_matrix']
         logging.info(type(images_tr))
         logging.info('Shape of training images: %s' %str(images_tr.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
+        logging.info('Shape of training rotation matrix dataset: %s' %str(rotation_tr.shape)) 
         
         logging.info('=============================================================================')
         logging.info('Loading validation data from: {}'.format(sys_config.project_data_root))
@@ -200,10 +210,14 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_end=idx_end_vl,
                                                                                 train_test='val',
                                                                                 suffix=suffix,
+                                                                                include_compressed_sensing=include_compressed_sensing,
+                                                                                only_compressed_sensing=only_compressed_sensing,
                                                                                 )
         
         images_vl = data_vl['sliced_images_val']
+        rotation_vl = data_vl['rotation_matrix']
         logging.info('Shape of validation images: %s' %str(images_vl.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
+        logging.info('Shape of validation rotation matrix dataset: %s' %str(rotation_vl.shape))
         logging.info('=============================================================================')
         
 
@@ -213,14 +227,19 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
                                                                                 idx_end=idx_end_ts,
                                                                                 train_test='test',
                                                                                 suffix = suffix,
+                                                                                include_compressed_sensing=include_compressed_sensing,
+                                                                                only_compressed_sensing=only_compressed_sensing,
                                                                                 )
         
         images_ts = data_ts['sliced_images_test']
+        rotation_ts = data_ts['rotation_matrix']
         if with_test_labels:
                 labels_ts = data_ts['labels_test']
 
         logging.info('Shape of test images: %s' %str(images_ts.shape)) # expected: [img_size_z*num_images, img_size_x, vol_size_y, img_size_t, n_channels]
+        logging.info('Shape of test rotation matrix dataset: %s' %str(rotation_ts.shape))
         logging.info('=============================================================================')
+
 
     
     # ================================================
@@ -325,11 +344,17 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 5, idx_start_vl
     else:
         raise ValueError(f"Preprocessing method {config['preprocess_method']} not implemented.")
     
-    if with_test_labels:
-        
-        return images_tr, images_vl, images_ts, labels_ts
-    else:
-        return images_tr, images_vl, images_ts
+
+    # Make a return dictionary
+    return_dic = {'images_tr': images_tr, 'images_vl': images_vl, 'images_test': images_ts, 'labels_test': labels_ts,
+                  'rotation_tr': rotation_tr, 'rotation_vl': rotation_vl, 'rotation_test': rotation_ts}
+    
+    return return_dic
+    #if with_test_labels:
+    #    
+    #    return images_tr, images_vl, images_ts, labels_ts
+    #else:
+    #    return images_tr, images_vl, images_ts
 
 def load_syntetic_data(preprocess_method,
                         idx_start,
