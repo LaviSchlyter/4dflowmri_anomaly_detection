@@ -4,6 +4,11 @@ from helpers.metrics import RMSE, compute_auc_roc_score, compute_average_precisi
 from sklearn.metrics import roc_curve, auc, average_precision_score
 import os
 from scipy import stats
+from scipy.stats import ttest_ind, mannwhitneyu, pearsonr, spearmanr, pointbiserialr
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.preprocessing import LabelEncoder
+
 
 from config import system_eval as config_sys
 project_code_root = config_sys.project_code_root
@@ -16,21 +21,258 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 
 
+# Custom palette
+custom_palette = {'Male': '#ABC8E2', 'Female': '#F4BE9F', 'Cases': '#C9A9E5', 'Controls': '#A7D8A2'}
 
-def plot_scores(healthy_scores, sick_scores, results_dir, level,  data="test", deformation=None, note=None):
+## Descriptive analysis for sex, age and group distribution at inference
+
+def descriptive_stats(df):
+    """
+    Compute descriptive statistics for anomaly scores.
+    """
+    logging.info("Descriptive Statistics:")
+    desc_stats = df.groupby('Label', observed = False)['anomaly_score'].describe()
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+        logging.info('\n{}'.format(desc_stats))
+        
+
+    return desc_stats
+
+def compare_groups(df):
+    """
+    Compare anomaly scores between different groups.
+    """
+    logging.info("\nComparative Analysis:")
+    # Perform t-test to compare mean anomaly scores between healthy and anomalous groups
+    t_stat, p_val = ttest_ind(df[df['Label'] == 'Controls']['anomaly_score'], df[df['Label'] == 'Cases']['anomaly_score'])
+    logging.info("T-test p-value: %s", p_val)
+    if p_val < 0.05:
+        logging.info("The difference in mean anomaly scores between healthy and anomalous groups is statistically significant.")
+    else:
+        logging.info("There is no statistically significant difference in mean anomaly scores between healthy and anomalous groups.")
+    return p_val
+
+
+
+def correlation_analysis(df):
+    """
+    Perform correlation analysis between age, sex, and anomaly scores.
+    
+    Args:
+    - df: DataFrame containing the data
+    
+    Returns:
+    - pearson_corr_age: Pearson correlation coefficient between age and anomaly scores
+    - pearson_p_val_age: p-value for the correlation between age and anomaly scores
+    - point_biserial_corr: Point-biserial correlation coefficient between sex and anomaly scores
+    - point_biserial_p_val: p-value for the correlation between sex and anomaly scores
+    """
+    logging.info("\nCorrelation Analysis:")
+    
+    # Compute Pearson correlation coefficient between age and anomaly scores
+    pearson_corr_age, pearson_p_val_age = pearsonr(df['Age'], df['anomaly_score'])
+    logging.info("Pearson correlation coefficient (Age vs. Anomaly Score): %s", pearson_corr_age)
+    logging.info("Pearson correlation p-value (Age vs. Anomaly Score): %s", pearson_p_val_age)
+    if pearson_p_val_age < 0.05:
+        logging.info("There is a significant correlation between age and anomaly scores.")
+        if pearson_corr_age > 0:
+            logging.info("Older individuals tend to have higher anomaly scores.")
+        elif pearson_corr_age < 0:
+            logging.info("Younger individuals tend to have higher anomaly scores.")
+        else:
+            logging.info("There is no association between age and anomaly scores.")
+    else:
+        logging.info("There is no significant correlation between age and anomaly scores.")
+
+    # Map the Sex columns Male Female to 0 and 1
+    df['Sex'] = df['Sex'].map({'Male': 0, 'Female': 1})
+
+    # Compute point-biserial correlation coefficient between sex and anomaly scores
+    point_biserial_corr, point_biserial_p_val = pointbiserialr(df['Sex'], df['anomaly_score'])
+    logging.info("Point-biserial correlation coefficient (Sex vs. Anomaly Score): %s", point_biserial_corr)
+    logging.info("Point-biserial correlation p-value (Sex vs. Anomaly Score): %s", point_biserial_p_val)
+    if point_biserial_p_val < 0.05:
+        logging.info("There is a significant correlation between sex and anomaly scores.")
+        if point_biserial_corr > 0:
+            logging.info("Females tend to have higher anomaly scores.")
+        elif point_biserial_corr < 0:
+            logging.info("Males tend to have higher anomaly scores.")
+        else:
+            logging.info("There is no association between sex and anomaly scores.")
+    else:
+        logging.info("There is no significant correlation between sex and anomaly scores.")
+    
+    return pearson_corr_age, pearson_p_val_age, point_biserial_corr, point_biserial_p_val
+
+
+
+def regression_analysis(df):
+    """
+    Perform linear regression to model the relationship between age/sex and anomaly scores.
+    """
+    logging.info("\nRegression Analysis:")
+    # Encode sex variable as numeric (0 for Female, 1 for Male)
+    label_encoder = LabelEncoder()
+    df['Sex'] = label_encoder.fit_transform(df['Sex'])
+    
+    # Fit linear regression model
+    X = df[['Age', 'Sex']]
+    y = df['anomaly_score']
+    model = LinearRegression()
+    model.fit(X, y)
+    
+    # Predict anomaly scores using the model
+    y_pred = model.predict(X)
+    
+    # Compute model performance metrics
+    mse = mean_squared_error(y, y_pred)
+    r2 = r2_score(y, y_pred)
+    
+    logging.info("Mean Squared Error: %s", mse)
+    logging.info("R^2 Score: %s", r2)
+    
+    # Print regression coefficients
+    logging.info("Regression Coefficients:")
+    logging.info("Intercept: %s", model.intercept_)
+    logging.info("Age Coefficient: %s", model.coef_[0])
+    logging.info("Sex Coefficient: %s", model.coef_[1])
+
+    
+    return mse, r2, model.intercept_, model.coef_
+
+def visualize_data(df, save_path):
+    """
+    Visualize data using plots and save them to a specified directory.
+    
+    Args:
+    - df: DataFrame containing the data
+    - save_path: Directory path to save the plots
+    """
+    # Create the directory if it doesn't exist
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+        
+    
+    # Boxplot of anomaly scores by label (healthy vs. anomalous)
+    plt.figure(figsize=(8, 6))
+    sns.boxplot(x='Label', y='anomaly_score', data=df, palette=custom_palette)
+    plt.title("Boxplot of Anomaly Scores by Label")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Anomaly Score")
+    plt.savefig(os.path.join(save_path, "boxplot_anomaly_scores.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Violin plot of anomaly scores by label
+    plt.figure(figsize=(8, 6))
+    sns.violinplot(x='Label', y='anomaly_score', data=df, palette=custom_palette, cut=0)
+    plt.title("Violin Plot of Anomaly Scores by Label")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Anomaly Score")
+    plt.savefig(os.path.join(save_path, "violinplot_anomaly_scores.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Bar plot of mean anomaly scores by label
+    plt.figure(figsize=(8, 6))
+    sns.barplot(x='Label', y='anomaly_score', data=df, estimator=np.mean, palette=custom_palette)
+    plt.title("Bar Plot of Mean Anomaly Scores by Label")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Mean Anomaly Score")
+    plt.savefig(os.path.join(save_path, "barplot_mean_anomaly_scores_ci.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+
+    df['Sex'] = df['Sex'].map({0:'Male', 1:'Female'})
+    
+    # Categorical boxplot of anomaly scores by label and sex
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(x='Label', y='anomaly_score', hue='Sex', data=df, palette=custom_palette)
+    plt.title("Categorical Boxplot of Anomaly Scores by Label and Sex")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Anomaly Score")
+    plt.legend(title='Sex')
+    plt.savefig(os.path.join(save_path, "categorical_boxplot_anomaly_scores_sex.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Create age groups based on age ranges
+    bins = [0, 30, 60, float('inf')]
+    labels = ['<30', '30-60', '60>']
+    df['Age Group'] = pd.cut(df['Age'], bins=bins, labels=labels)
+    
+    # Categorical boxplot of anomaly scores by label and age group
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(x='Label', y='anomaly_score', hue='Age Group', data=df)
+    plt.title("Categorical Boxplot of Anomaly Scores by Label and Age Group")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Anomaly Score")
+    plt.legend(title='Age Group')
+    plt.savefig(os.path.join(save_path, "categorical_boxplot_anomaly_scores_age_group.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Pairplot with emphasis on age group
+    plt.figure(figsize=(10, 6))
+    sns.pairplot(df, hue='Age Group', palette='husl', vars=['Age', 'anomaly_score'])
+    plt.title("Pairplot of Anomaly Scores and Age Group")
+    plt.savefig(os.path.join(save_path, "pairplot_anomaly_scores_age_group.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Scatter plot with hue, emphasis on age group
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(data=df, x='Age', y='anomaly_score', hue='Age Group', palette='husl')
+    plt.title("Scatter Plot of Anomaly Scores by Age, with Age Group Differentiation")
+    plt.xlabel("Age")
+    plt.ylabel("Anomaly Score")
+    plt.savefig(os.path.join(save_path, "scatterplot_anomaly_scores_age_group.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Bar plot with hue, emphasis on age group
+    plt.figure(figsize=(8, 6))
+    sns.barplot(x='Label', y='anomaly_score', hue='Age Group', data=df, estimator=np.mean)
+    plt.title("Bar Plot of Mean Anomaly Scores by Label and Age Group")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Mean Anomaly Score")
+    plt.savefig(os.path.join(save_path, "barplot_mean_anomaly_scores_age_group.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Violin plot with hue, emphasis on age group
+    plt.figure(figsize=(10, 6))
+    sns.violinplot(x='Label', y='anomaly_score', hue='Age Group', data=df)
+    plt.title("Violin Plot of Anomaly Scores by Label and Age Group")
+    plt.xlabel("Label (0: Healthy, 1: Anomalous)")
+    plt.ylabel("Anomaly Score")
+    plt.legend(title='Age Group')
+    plt.savefig(os.path.join(save_path, "violinplot_anomaly_scores_age_group.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+    
+    # Histogram with facet grid, emphasis on age group
+    g = sns.FacetGrid(df, col="Label", hue="Age Group", palette='husl')
+    g.map(sns.histplot, "anomaly_score", kde=True)
+    g.set_axis_labels("Anomaly Score", "Frequency")
+    g.add_legend(title='Age Group')
+    plt.savefig(os.path.join(save_path, "histogram_anomaly_scores_age_group.png"))  # Save the plot
+    plt.close()  # Close the plot to clear memory
+
+
+
+
+
+def plot_scores(healthy_scores, sick_scores, results_dir, level,  data="test", deformation=None, note=None, through_time=False):
     save_dir = get_save_dir(data, results_dir, deformation)
     
-    # Calculate common metrics
-    axis_values = (1, 2, 3, 4, 5) if level == 'patient' else (2, 3, 4, 5)
+    # axis: [#subjects, z_slice,c,x,y,t]
+
+    if through_time:
+        axis_values = (1, 2, 3, 4, 5) if level == 'patient' else (1, 2, 3, 4)
+    else:
+        axis_values = (1, 2, 3, 4, 5) if level == 'patient' else (2, 3, 4, 5)
+
     sick_means = np.mean(sick_scores, axis=axis_values)
     sick_stds = sick_scores.std(axis=axis_values)
     healthy_means = np.mean(healthy_scores, axis=axis_values)
     healthy_stds = healthy_scores.std(axis=axis_values)
     
     if level == 'patient':
-        plot_patient_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note)
+        plot_patient_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note, through_time)
     elif level == 'imagewise':
-        indexes =plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note)
+        indexes =plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note, through_time)
         return indexes
     else:
         print("Invalid level. Please enter 'patient' or 'imagewise'.")
@@ -369,6 +611,46 @@ def statistical_tests(healthy_scores, anomalous_scores):
         logging.info(f"Student's t-test p-value: {p_ttest}")
     logging.info('If p < 0.05, the difference is statistically significant at the 5% level')
 
+
+def filter_subjects(data_path, experiment_name):
+    """
+    Filter subjects based on experiment requirements. If we only use compressed sensing, we need the correct subject names
+
+    Args:
+        data_path (str): The path to the data directory.
+        experiment_name (str): The name of the experiment.
+
+    Returns:
+        list: A list of filtered subject names.
+
+    """
+    # Paths to compressed sensing data directories
+    cs_controls_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/preprocessed/controls/dicom_compressed_sensing'
+    cs_patients_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/preprocessed/patients/dicom_compressed_sensing'
+
+    # Get all subject names and remove the .npy extension
+    test_names = [os.path.splitext(name)[0].split('seg_')[1] for name in os.listdir(data_path + '/test')]
+    test_names.sort()
+
+    # Get the list of compressed sensing subjects and remove the .npy extension
+    cs_subjects_controls = set(os.path.splitext(name)[0] for name in os.listdir(cs_controls_path))
+    cs_subjects_patients = set(os.path.splitext(name)[0] for name in os.listdir(cs_patients_path))
+    cs_subjects = cs_subjects_controls.union(cs_subjects_patients)
+
+    # Filter subjects based on experiment requirements
+    if 'without_cs' in experiment_name:
+        # Remove compressed sensing subjects
+        filtered_names = [name for name in test_names if name not in cs_subjects]
+    elif 'only_cs' in experiment_name:
+        # Only keep compressed sensing subjects
+        filtered_names = [name for name in test_names if name in cs_subjects]
+    else:
+        # Keep all subjects
+        filtered_names = test_names
+
+    return filtered_names
+
+
 def get_random_and_neighbour_indices(indices, subject_length):    
 
                         neighbour_indices = []
@@ -408,12 +690,43 @@ def get_save_dir(data, results_dir, deformation, note = None):
     else:
         return os.path.join(project_code_root, results_dir, data)
     
+def plot_lineplot(df, save_dir, data, note, through_time=False, palette=None, errorbar=None):
+    # Create the line plot
+    plt.figure(figsize=(12, 6))
+    if errorbar:
+        line_plot = sns.lineplot(data=df, x='imagewise', y='Mean Score', hue='Subject Status', palette=palette, err_style="bars", errorbar=errorbar)
+    else:
+        line_plot = sns.lineplot(data=df, x='imagewise', y='Mean Score', hue='Subject Status', style="Subject", palette=palette)
+    line_plot.legend_.remove()  # Remove the original legend
+    if through_time:
+        plt.xlabel('Time Step')
+    else:
+        plt.xlabel('Z Slice')
+    # Create a new legend only for Subject Status (Color)
+    handles, labels = line_plot.get_legend_handles_labels()
+    line_plot.legend(handles=handles[:3], labels=labels[:3], loc='upper left')
+    plt.ylabel('Mean Anomaly Score')
+    if errorbar == None:
+        save_name = f'{data}_mean_imagewise_scores_by_patient'
+    else:
+        save_name = f'{data}_mean_imagewise_scores_{errorbar}'
+    if note:        
+        plt.savefig(os.path.join(save_dir, f'{save_name}_{note}.png'))
+        # Set y axis to log scale
+        plt.yscale('log')
+        plt.savefig(os.path.join(save_dir, f'{save_name}_{note}_log.png'))
+    else:
+        plt.savefig(os.path.join(save_dir, f'{save_name}{"_through_time" if through_time else ""}.png'))
+        # Set y axis to log scale
+        plt.yscale('log')
+        plt.savefig(os.path.join(save_dir, f'{save_name}{"_through_time" if through_time else ""}_log.png'))
+    plt.close()
 
-
-def plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note):
+def plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note, through_time=False):
     # Prepare the data for seaborn
+    # imagewise here refers to the z slice or time depending on through_time flag
     sick_df = pd.DataFrame({
-        'Subject Status': np.repeat('Case', sick_means.size),
+        'Subject Status': np.repeat('Cases', sick_means.size),
         'Subject': np.repeat(np.arange(sick_means.shape[0]), sick_means.shape[1]),
         'imagewise': np.tile(np.arange(1, sick_means.shape[1] + 1), sick_means.shape[0]),
         'Mean Score': sick_means.flatten(),
@@ -421,7 +734,7 @@ def plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, sav
     })
 
     healthy_df = pd.DataFrame({
-        'Subject Status': np.repeat('Control', healthy_means.size),
+        'Subject Status': np.repeat('Controls', healthy_means.size),
         'Subject': np.repeat(np.arange(healthy_means.shape[0]), healthy_means.shape[1]),
         'imagewise': np.tile(np.arange(1, healthy_means.shape[1] + 1), healthy_means.shape[0]),
         'Mean Score': healthy_means.flatten(),
@@ -430,14 +743,26 @@ def plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, sav
 
     # Concatenate the two dataframes
     df = pd.concat([sick_df, healthy_df])
+
+
+    plot_lineplot(df, save_dir, data, note, through_time=through_time, palette=custom_palette, errorbar=None)
+    plot_lineplot(df, save_dir, data, note, through_time=through_time, palette=custom_palette, errorbar='sd')
+    plot_lineplot(df, save_dir, data, note, through_time=through_time, palette=custom_palette, errorbar='se')
+    plot_lineplot(df, save_dir, data, note, through_time=through_time, palette=custom_palette, errorbar='ci')
     
-        
+
+
+    
+    """
 
     # Create the line plot
     plt.figure(figsize=(12, 6))
-    line_plot = sns.lineplot(data=df, x='imagewise', y='Mean Score', hue='Subject Status', style="Subject")
+    line_plot = sns.lineplot(data=df, x='imagewise', y='Mean Score', hue='Subject Status', style="Subject", palette=custom_palette)
     line_plot.legend_.remove()  # Remove the original legend
-    plt.xlabel('Z Slice')
+    if through_time:
+        plt.xlabel('Time Step')
+    else:
+        plt.xlabel('Z Slice')
     # Create a new legend only for Subject Status (Color)
     handles, labels = line_plot.get_legend_handles_labels()
     line_plot.legend(handles=handles[:3], labels=labels[:3], loc='upper left')
@@ -447,22 +772,25 @@ def plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, sav
     #plt.title('Mean Anomaly Score for each subject group')
     plt.ylabel('Mean Anomaly Score')
     if note:        
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_{note}.png'))
+        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_by_patient_{note}.png'))
         # Set y axis to log scale
         plt.yscale('log')
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_{note}_log.png'))
+        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_by_patient_{note}_log.png'))
     else:
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_by_patient.png'))
+        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_by_patient{"_through_time" if through_time else ""}.png'))
         # Set y axis to log scale
         plt.yscale('log')
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_by_patient_log.png'))
+        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_by_patient{"_through_time" if through_time else ""}_log.png'))
 
 
     plt.close()
     # Create the line plot
     plt.figure(figsize=(12, 6))
-    sns.lineplot(data=df, x='imagewise', y='Mean Score', hue='Subject Status', err_style="bars", errorbar='sd')
-    plt.xlabel('Z Slice')
+    sns.lineplot(data=df, x='imagewise', y='Mean Score', hue='Subject Status', err_style="bars", errorbar='se', palette=custom_palette)
+    if through_time:
+        plt.xlabel('Time Step')
+    else:
+        plt.xlabel('Z Slice')
     plt.legend(title='Subject Status')
     
 
@@ -475,71 +803,83 @@ def plot_imagewise_level(sick_means, sick_stds, healthy_means, healthy_stds, sav
         plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_{note}_log.png'))
 
     else:
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores.png'))
+        
+        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores{"_through_time" if through_time else ""}.png'))
         # Set y axis to log scale
         plt.yscale('log')
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores_log.png'))
+        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_mean_imagewise_scores{"_through_time" if through_time else ""}_log.png'))
     plt.close()
+    """
             
     # If note exists we want to return the indexes of the slices with the min nad max score for the healthy and sick patient (there is only one patient in the healthy group and one in the sick group)
     # Save them in dictionary to return
     if note:
         # Get the indexes of the slices with the min and max score for the healthy and sick patient
-        sick_min_index = df.loc[df['Subject Status'] == 'Case']['Mean Score'].idxmin()
-        sick_max_index = df.loc[df['Subject Status'] == 'Case']['Mean Score'].idxmax()
-        healthy_min_index = df.loc[df['Subject Status'] == 'Control']['Mean Score'].idxmin()
-        healthy_max_index = df.loc[df['Subject Status'] == 'Control']['Mean Score'].idxmax()
+        sick_min_index = df.loc[df['Subject Status'] == 'Cases']['Mean Score'].idxmin()
+        sick_max_index = df.loc[df['Subject Status'] == 'Cases']['Mean Score'].idxmax()
+        healthy_min_index = df.loc[df['Subject Status'] == 'Controls']['Mean Score'].idxmin()
+        healthy_max_index = df.loc[df['Subject Status'] == 'Controls']['Mean Score'].idxmax()
         # Get the imagewise indexes
-        sick_min_index = df.loc[df['Subject Status'] == 'Case']['imagewise'][sick_min_index]
-        sick_max_index = df.loc[df['Subject Status'] == 'Case']['imagewise'][sick_max_index]
-        healthy_min_index = df.loc[df['Subject Status'] == 'Control']['imagewise'][healthy_min_index]
-        healthy_max_index = df.loc[df['Subject Status'] == 'Control']['imagewise'][healthy_max_index]
+        sick_min_index = df.loc[df['Subject Status'] == 'Cases']['imagewise'][sick_min_index]
+        sick_max_index = df.loc[df['Subject Status'] == 'Cases']['imagewise'][sick_max_index]
+        healthy_min_index = df.loc[df['Subject Status'] == 'Controls']['imagewise'][healthy_min_index]
+        healthy_max_index = df.loc[df['Subject Status'] == 'Controls']['imagewise'][healthy_max_index]
         # Save them in dictionary
         indexes = {'sick_min_index': sick_min_index, 'sick_max_index': sick_max_index, 'healthy_min_index': healthy_min_index, 'healthy_max_index': healthy_max_index}
         return indexes
     plt.close()
 
 
+def plot_barplot(df, save_dir, data, note=None, with_error_bars=False, palette=None):
+    # Create the plot
+    plt.figure(figsize=(12, 6))
+    
+    # Plot with error bars if specified
+    if with_error_bars:
+        sns.barplot(x='Subject', y='Mean Score', hue='Status', data=df, yerr=df['Std Deviation'], capsize=.2, palette=palette)
+        errorbar_label = '_with_std_bars'  
+    else:
+        sns.barplot(x='Subject', y='Mean Score', hue='Status', data=df, capsize=.2, palette=palette)
+        errorbar_label = ''  
+        
+    plt.xlabel('')
+    plt.xticks(rotation=90)  # Rotate x-axis labels to avoid overlap
+    plt.ylabel('Mean Anomaly Score')
+    plt.tight_layout()
+    
+    # Save plot
+    if note:
+        plt.savefig(os.path.join(save_dir, f'{data}_patient_mean_wise_scores_{note}{errorbar_label}.png'))
+        #plt.ylim(-0.04, 0.055)  # Limit the y-axis
+        #plt.savefig(os.path.join(save_dir, f'{data}_patient_mean_wise_scores_{note}_y_lim{errorbar_label}.png'))
+    else:
+        plt.savefig(os.path.join(save_dir, f'{data}_patient_mean_wise_scores{errorbar_label}.png'))
+        #plt.ylim(-0.04, 0.055)  # Limit the y-axis
+        #plt.savefig(os.path.join(save_dir, f'{data}_patient_mean_wise_scores_y_lim{errorbar_label}.png'))
+        
+    plt.close()
 
-
-def plot_patient_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note):
+def plot_patient_level(sick_means, sick_stds, healthy_means, healthy_stds, save_dir, data, note, through_time=False):
     df_sick = pd.DataFrame({
-            'Subject': ['Case '+str(i) for i in range(len(sick_means))],
+            'Subject': ['Cases '+str(i) for i in range(len(sick_means))],
             'Mean Score': sick_means,
             'Std Deviation': sick_stds,
-            'Status': ['Case']*len(sick_means)
+            'Status': ['Cases']*len(sick_means)
         })
 
     # Create a dataframe for healthy patients
     df_healthy = pd.DataFrame({
-        'Subject': ['Control '+str(i) for i in range(len(healthy_means))],
+        'Subject': ['Controls '+str(i) for i in range(len(healthy_means))],
         'Mean Score': healthy_means,
         'Std Deviation': healthy_stds,
-        'Status': ['Control']*len(healthy_means)
+        'Status': ['Controls']*len(healthy_means)
     })
 
     # Concatenate the dataframes
     df = pd.concat([df_sick, df_healthy])
-    # Create the plot
-    plt.figure(figsize=(12, 6))
-    sns.barplot(x='Subject', y='Mean Score', hue='Status', data=df, yerr=df['Std Deviation'], capsize=.2)
-    plt.xlabel('')
-    plt.xticks(rotation=90)  # This will rotate the x-axis labels to avoid overlap
+
+    # Plot the barplot
+    plot_barplot(df, save_dir, data, note, with_error_bars=True, palette=custom_palette)
+    plot_barplot(df, save_dir, data, note, with_error_bars=False, palette=custom_palette)
     
-
-    #plt.title('Mean Anomaly Score with Standard Deviation for each subject')
-    plt.ylabel('Mean Anomaly Score')
-    plt.tight_layout()
-    if note:
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_patient_mean_wise_scores_{note}.png'))
-        # Limit the y axis
-        plt.ylim(-0.04, 0.055)
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_patient_mean_wise_scores_{note}_y_lim.png'))
-        plt.close()
-    else:
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_patient_mean_wise_scores.png'))
-        # Limit the y axis
-        plt.ylim(-0.04, 0.055)
-        plt.savefig(os.path.join(save_dir+ '/' + f'{data}_patient_mean_wise_scores_y_lim.png'))    
-        plt.close()
-
+    
