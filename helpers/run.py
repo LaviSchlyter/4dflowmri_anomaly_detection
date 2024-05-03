@@ -17,7 +17,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 # =================================================================================
 # ============== HELPER FUNCTIONS =============================================
 
-from utils import compute_losses_VAE, make_dir_safely, apply_blending
+from utils import compute_losses, make_dir_safely, apply_blending, compute_euler_angles_xyz_and_trace
 from batches import iterate_minibatches
 from metrics import compute_auc_roc_score, compute_average_precision_score
 from synthetic_anomalies import create_cube_mask, create_cube_mask_4D
@@ -60,7 +60,7 @@ def get_combined_images(images, indices):
 # =================================================================================
 # ============== Evaluation function =============================================
 # =================================================================================
-def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val_table_watch):
+def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val_table_watch, data_dict=None):
     # Set the model to eval mode
     model.eval()
     
@@ -80,19 +80,16 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
     adjacent_batch_slices = None
     # Loop over the batches
     # No data augmentation for validation set
-    for nv, batch in enumerate(iterate_minibatches(images_vl, config, data_augmentation=False, with_labels= config['use_synthetic_validation'], remove_indices= config['self_supervised'], indices_to_remove = config['indices_to_remove'])):
+    for nv, batch_dict in enumerate(iterate_minibatches(images_vl, config, data_augmentation=False, with_labels= config['use_synthetic_validation'], remove_indices= config['self_supervised'], indices_to_remove = config['indices_to_remove'], data_dict=data_dict, train_data = False)):
 
         with torch.no_grad():
-            if len(batch) == 3:
-                # We have the labels
-                input_images, y, batch_z_slice = batch  
+            input_images = batch_dict['X']
+            batch_z_slice = batch_dict['batch_z_slice']
+            y = batch_dict['Y']
+            if y is not None:
                 y = torch.from_numpy(y).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
-            elif len(batch) == 2:
-                input_images, batch_z_slice = batch
-            else:
-                raise ValueError('batch does not have the correct length, should be 2 or 3 and has length {}'.format(len(batch)))
-            # Turn batch slices into tensor
-
+            rotation_matrix = batch_dict['rotation_matrix']
+            
             batch_z_slice = torch.from_numpy(batch_z_slice).to(device)
 
             # If we are looking at neighbouring slices we need to adapt the inputs
@@ -107,9 +104,13 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
 
             # Transfer the input_images to "device"
             input_images = torch.from_numpy(input_images).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+
+            # Transfer the rotation matrix to "device"
+            rotation_matrix = torch.from_numpy(rotation_matrix).to(device).float()
             
             # Forward pass
-            input_dict = {'input_images': input_images.float(), 'batch_z_slice': batch_z_slice.float(), 'adjacent_batch_slices': adjacent_batch_slices}
+            input_dict = {'input_images': input_images.float(), 'batch_z_slice': batch_z_slice.float(), 'adjacent_batch_slices': adjacent_batch_slices,
+                          'rotation_matrix': rotation_matrix}
             output_dict = model(input_dict)
             # Visualization
             if (epoch%(config['validation_viz_frequency']) == 0) or (epoch ==1):
@@ -135,18 +136,19 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
             else:
 
                 if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
-                    dict_loss = compute_losses_VAE(input_images, output_dict, config)
+                    dict_loss = compute_losses(input_images, output_dict, config)
                     val_gen_losses += dict_loss['gen_loss'].mean().item()
                     val_res_losses += dict_loss['res_loss'].mean().item()
                     val_lat_losses += dict_loss['lat_loss'].mean().item()
-                elif config['model'] == 'tvae':
-                    dict_loss = compute_losses_TVAE(input_images, output_dict, config)
-                    val_gen_losses += dict_loss['gen_loss'].mean().item()
-                    val_kld_losses += dict_loss['kld_loss'].mean().item()
-                elif config['model'] == 'mmd_vae':
-                    dict_loss = compute_losses_MMDVAE(input_images, output_dict, config, device)
-                    val_gen_losses += dict_loss['gen_loss'].mean().item()
-                    val_mmd_losses += dict_loss['mmd_loss'].mean().item()
+                elif config['model'] == 'conv_enc_dec_aux':
+                    #TODO: implement the loss computation for the conv_enc_dec_aux
+                    logging.info('NOT IMPLEMENTED YET')
+                    #dict_loss = compute_losses(input_images, output_dict, config)
+                    #val_gen_losses += dict_loss['gen_loss'].mean().item()
+                    #val_res_losses += dict_loss['res_loss'].mean().item()
+                    #val_lat_losses += dict_loss['lat_loss'].mean().item()
+                    #val_euler_losses += dict_loss['euler_loss'].mean().item()
+                    #val_trace_losses += dict_loss['trace_loss'].mean().item()
                 else:
                     raise ValueError('output_dict does not contain the correct keys')
             
@@ -196,7 +198,7 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
     else:
 
         
-        if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
+        if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae') or (config['model'] == 'conv_with_aux'):
             # VAE model
             # Logging the validation losses
             logging.info('Epoch: {}, val_gen_losses: {:.5f}, val_lat_losses: {:.5f}, val_res_losses: {:.5f}, val_losses: {:.5f}'.format(epoch,  val_gen_losses/number_of_batches,val_lat_losses/number_of_batches, val_res_losses/number_of_batches, val_losses/number_of_batches))
@@ -211,6 +213,12 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
             # Logging the validation losses
             logging.info('Epoch: {}, val_gen_losses: {:.5f}, val_mmd_losses: {:.5f}, val_losses: {:.5f}'.format(epoch,  val_gen_losses/number_of_batches,val_mmd_losses/number_of_batches, val_losses/number_of_batches))
             wandb.log({ 'val_gen_losses': round(val_gen_losses/number_of_batches, 5) , 'val_mmd_losses': round(val_mmd_losses/number_of_batches, 5), 'val_losses': round(val_losses/number_of_batches, 5), 'best_val_score': best_val_score/number_of_batches})
+        elif config['model'] == 'conv_enc_dec_aux':
+            # ConvEncDecAux model
+            # Logging the validation losses
+            
+            logging.info('Epoch: {}, val_gen_losses: {:.5f}, val_lat_losses: {:.5f}, val_res_losses: {:.5f}, val_euler_losses: {:.5f}, val_trace_losses: {:.5f}, val_losses: {:.5f}'.format(epoch,  val_gen_losses/number_of_batches,val_lat_losses/number_of_batches, val_res_losses/number_of_batches, val_euler_losses/number_of_batches, val_trace_losses/number_of_batches, val_losses/number_of_batches))
+            wandb.log({ 'val_gen_losses': round(val_gen_losses/number_of_batches, 5) , 'val_lat_losses': round(val_lat_losses/number_of_batches, 5), 'val_res_losses': round(val_res_losses/number_of_batches, 5), 'val_euler_losses': round(val_euler_losses/number_of_batches, 5), 'val_trace_losses': round(val_trace_losses/number_of_batches, 5), 'val_losses': round(val_losses/number_of_batches, 5), 'best_val_score': best_val_score/number_of_batches})
 
     # Set the model back to train mode
     model.train()
@@ -221,7 +229,7 @@ def evaluate(model,epoch, images_vl, best_val_score, log_dir,config, device, val
 # ============== Training function =============================================
 # =================================================================================
 def train(model: torch.nn.Module,
-            images_tr: np.ndarray, 
+            data_dict: dict, 
             images_vl: np.ndarray,
             log_dir:str,
             already_completed_epochs:int,
@@ -249,24 +257,26 @@ def train(model: torch.nn.Module,
     print(f'validation_metric_format', config['validation_metric_format'])
     print(f'validation_metric', config['val_metric'])
     print(f'List of indices of type of deformation to remove from validation since used in training: {config["indices_to_remove"]}')  
+    # Auxiliary loss factor
+    print(f'aux_loss_factor', config.get('aux_loss_factor', None))
+    
     
     wandb.watch(model, log="all", log_freq=200)
-    #wandb.watch(model, log=None)
-    #wandb.define_metric("best_validation", summary="max")
 
+    images_tr = data_dict['images_tr']
 
     if config['use_synthetic_validation']:
         # Set the best validation to zero
         best_val_score = 0
-
-        
     else:
         # Set the best validation loss to infinity
         best_val_score = np.inf
+
     # If we continue training, then we load the best val score recorded so far
     if config['continue_training']:
         best_val_score = config['best_val_score']
         logging.info('Continuing training from epoch {} with best validation score {}'.format(already_completed_epochs, best_val_score))
+
     # If self supervised, generate a mask for the blending
     if config['self_supervised']:
         if config.get('get_neighbours', False):
@@ -293,6 +303,7 @@ def train(model: torch.nn.Module,
         
     
     adjacent_batch_slices = None
+
     # Loop over the epochs
     for epoch in tqdm(range(already_completed_epochs, config['epochs'])):
         # Start at 1
@@ -307,28 +318,24 @@ def train(model: torch.nn.Module,
         res_losses = 0
         lat_losses = 0
         losses = 0
-
+        bce_losses = 0
+        euler_losses = 0
+        trace_losses = 0
         
         number_of_batches = 0
         # Set y to None
         y = None
-        
 
-        for nt, batch in enumerate(iterate_minibatches(images_tr, config, data_augmentation=config['do_data_augmentation'])):
-            
-            if len(batch) == 3:
-                # We have the labels
-                input_images, y, batch_z_slice = batch  
-                #y = np.transpose(y, (0,4,1,2,3))
+        for nt, batch_dict in enumerate(iterate_minibatches(images_tr, config, data_augmentation=config['do_data_augmentation'], data_dict = data_dict)):
+
+
+            input_images = batch_dict['X']
+            batch_z_slice = batch_dict['batch_z_slice']
+            y = batch_dict['Y']
+            rotation_matrix = batch_dict['rotation_matrix']
+            if y is not None:
                 y = torch.from_numpy(y).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
-                # batch_z_slice into tensor
-                
-            elif len(batch) == 2:
-                input_images,batch_z_slice = batch
-
-            else:
-                raise ValueError('batch does not have the correct length, should be 2 or 3 and has length {}'.format(len(batch)))
-                
+        
             batch_z_slice = torch.from_numpy(batch_z_slice).to(device)
 
         
@@ -375,6 +382,7 @@ def train(model: torch.nn.Module,
 
                     # Apply blending
                     input_images, anomaly_masks = apply_blending(input_images, images_for_blend, mask_blending)
+                    
                     # Transfer the anomaly_masks to "device" and add channel dim
                     anomaly_masks = torch.from_numpy(anomaly_masks).to(device).unsqueeze(dim =1)
             else:
@@ -382,11 +390,14 @@ def train(model: torch.nn.Module,
                 
             # Transfer the input_images to "device"
             input_images = torch.from_numpy(input_images).transpose(1,4).transpose(2,4).transpose(3,4).to(device)
+            # Transfer the rotation matrix to "device"
+            rotation_matrix = torch.from_numpy(rotation_matrix).to(device).float()
             
             # Reset the gradients
             optimizer.zero_grad()
             
-            input_dict = {'input_images': input_images.float(), 'batch_z_slice': batch_z_slice.float(), 'adjacent_batch_slices':adjacent_batch_slices}
+            input_dict = {'input_images': input_images.float(), 'batch_z_slice': batch_z_slice.float(), 'adjacent_batch_slices':adjacent_batch_slices,
+                          'rotation_matrix': rotation_matrix}
             output_dict = model(input_dict) 
             if (epoch%(config['training_viz_frequency']) == 0) or (epoch ==1):
                 # Visualization
@@ -399,25 +410,60 @@ def train(model: torch.nn.Module,
                 # Here we don't use VAE loss 
                 dict_loss = {}
                 # Compute the binary cross entropy loss
-                dict_loss['loss'] = criterion(output_dict['decoder_output'], anomaly_masks.float())
+                dict_loss['bce_loss'] = criterion(output_dict['decoder_output'], anomaly_masks.float())
+                dict_loss['loss'] = dict_loss['bce_loss']
+
+
+                # Look into detaching theoutput because it is part of the graph 
+                with torch.no_grad():
+                # We add the contribution of the auxiliary loss
+                # Compute the Euler angles and the trace of the rotation matrix
+                    euler_trace_results= compute_euler_angles_xyz_and_trace(rotation_matrix)
+                    euler_angles, trace = euler_trace_results['euler_angles'].detach(), euler_trace_results['trace'].detach()
+
+                    # Add the euler angles and trace to the input dictionary
+                    input_dict['euler_angles'] = euler_angles
+                    input_dict['trace'] = trace
+
+                dict_loss_aux = compute_losses(input_images, output_dict, config, input_dict)
+                # Factor to adjust the importance of auxiliary losses
+                
+                dict_loss['loss'] += dict_loss_aux['total_aux_loss'].mean() # Average out the auxialiary loss over the batch
+                
+                euler_losses += dict_loss_aux['euler_loss'].mean().item()
+                trace_losses += dict_loss_aux['trace_loss'].mean().item()
+                bce_losses += dict_loss['bce_loss'].item() 
+
+
                 
             else:
 
                 # Check keys in output_dict to adapt loss computation
                 # Compute the loss
                 if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
-                    dict_loss = compute_losses_VAE(input_images, output_dict, config)
+                    dict_loss = compute_losses(input_images, output_dict, config)
                     gen_factor_losses += dict_loss['gen_factor_loss'].mean().item()
                     res_losses += dict_loss['res_loss'].mean().item()
                     lat_losses += dict_loss['lat_loss'].mean().item()
-                elif config['model'] == 'tvae':
-                    dict_loss = compute_losses_TVAE(input_images, output_dict, config)
+
+                elif config['model'].__contains__('conv_enc_dec_aux'):
+                    
+                    with torch.no_grad():
+                        # Compute the Euler angles and the trace of the rotation matrix
+                        euler_trace_results= compute_euler_angles_xyz_and_trace(rotation_matrix)
+                        euler_angles, trace = euler_trace_results['euler_angles'].detach(), euler_trace_results['trace'].detach()
+
+                        # Add the euler angles and trace to the input dictionary
+                        input_dict['euler_angles'] = euler_angles
+                        input_dict['trace'] = trace
+
+                    dict_loss = compute_losses(input_images, output_dict, config, input_dict)
                     gen_factor_losses += dict_loss['gen_factor_loss'].mean().item()
-                    kld_losses += dict_loss['kld_loss'].mean().item()
-                elif config['model'] == 'mmd_vae':
-                    dict_loss = compute_losses_MMDVAE(input_images, output_dict, config, device)
-                    gen_factor_losses += dict_loss['gen_factor_loss'].mean().item()
-                    mmd_factor_losses += dict_loss['mmd_factor_loss'].mean().item()
+                    res_losses += dict_loss['res_loss'].mean().item()
+                    lat_losses += dict_loss['lat_loss'].mean().item()
+                    euler_losses += dict_loss['euler_loss'].mean().item()
+                    trace_losses += dict_loss['trace_loss'].mean().item()
+
                 else:
                     raise ValueError('output_dict does not contain the correct keys')
             
@@ -441,10 +487,18 @@ def train(model: torch.nn.Module,
         if (epoch%(config['training_frequency']) == 0) or (epoch ==1):
             # Check if self supervised
             if config['self_supervised']:
-                logging.info('Epoch: {}, train_loss: {:.5f}'.format(epoch, losses/number_of_batches))
-                wandb.log({'train_loss': round(losses/number_of_batches, 5)})
+
+                if config['model'].__contains__('conv_enc_dec_aux'):
+
+                    # Logging the training losses including the auxiliary losses
+                    logging.info('Epoch: {}, train_loss: {:.5f}, train_bce_loss: {:.5f}, train_euler_loss: {:.5f}, train_trace_loss: {:.5f}'.format(epoch, losses/number_of_batches, bce_losses/number_of_batches, (euler_losses)/number_of_batches, (trace_losses)/number_of_batches))
+                    
+                    wandb.log({'train_loss': round(losses/number_of_batches, 5), 'train_euler_loss': round((euler_losses)/number_of_batches, 5), 'train_trace_loss': round((trace_losses)/number_of_batches, 5)})
+                else:
+                    logging.info('Epoch: {}, train_loss: {:.5f}'.format(epoch, losses/number_of_batches))
+                    wandb.log({'train_loss': round(losses/number_of_batches, 5)})
             else:
-                if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae'):
+                if (config['model'] == 'vae') or (config['model'] == 'vae_convT') or (config['model'] == 'cond_vae') or (config['model'] == 'conv_with_aux'):
                     logging.info('Epoch: {}, train_gen_factor_loss: {:.5f},train_lat_loss: {:.5f}, train_res_loss: {:.5f}, train_loss: {:.5f}'.format(epoch, gen_factor_losses/number_of_batches, lat_losses/number_of_batches, res_losses/number_of_batches, losses/number_of_batches))
 
                     wandb.log({'train_gen_factor_loss': round(gen_factor_losses/number_of_batches, 5), 'train_lat_loss': round(lat_losses/number_of_batches, 5), 'train_res_loss': round(res_losses/number_of_batches, 5), 'train_loss': round(losses/number_of_batches, 5)})
@@ -457,12 +511,18 @@ def train(model: torch.nn.Module,
                     logging.info('Epoch: {}, train_gen_factor_loss: {:.5f},train_mmd_factor_loss: {:.5f}, train_loss: {:.5f}'.format(epoch, gen_factor_losses/number_of_batches, mmd_factor_losses/number_of_batches, losses/number_of_batches))
 
                     wandb.log({'train_gen_factor_loss': round(gen_factor_losses/number_of_batches, 5), 'train_mmd_factor_loss': round(mmd_factor_losses/number_of_batches, 5), 'train_loss': round(losses/number_of_batches, 5)})
-                                # Save the model
+
+                elif config['model'].__contains__('conv_enc_dec_aux'):                    
+                    logging.info('Epoch: {}, train_gen_factor_loss: {:.5f},train_lat_loss: {:.5f}, train_res_loss: {:.5f}, train_euler_loss: {:.5f}, train_trace_loss: {:.5f}, train_loss: {:.5f}'.format(epoch, gen_factor_losses/number_of_batches, lat_losses/number_of_batches, res_losses/number_of_batches, (euler_losses)/number_of_batches, (trace_losses)/number_of_batches, losses/number_of_batches))
+                    wandb.log({'train_gen_factor_loss': round(gen_factor_losses/number_of_batches, 5), 'train_lat_loss': round(lat_losses/number_of_batches, 5), 'train_res_loss': round(res_losses/number_of_batches, 5), 'train_euler_loss': round((euler_losses)/number_of_batches, 5), 'train_trace_loss': round((trace_losses)/number_of_batches, 5), 'train_loss': round(losses/number_of_batches, 5)})
+
+
+            # Save the model
             checkpoint(model, os.path.join(log_dir, f"{config['model_name']}.ckpt-{epoch}"))
 
         # Evaluate the model on the validation set
         if (epoch%(config['validation_frequency']) == 0) or (epoch ==1):
-            best_val_score = evaluate(model, epoch, images_vl, best_val_score, log_dir, config, device, val_table_watch)
+            best_val_score = evaluate(model, epoch, images_vl, best_val_score, log_dir, config, device, val_table_watch, data_dict=data_dict)
             
             # TODO: implement visualization of the latent space ? 
 
@@ -493,8 +553,8 @@ def visualize(epoch, input_images, ouput_images, table_watch, labels=None, table
     channels = ouput_images.shape[1]
 
     # Map the colors to have the same scale
-    input_cmap =input_cpu
-    output_cmap =output_cpu
+    input_cmap = input_cpu
+    output_cmap = output_cpu
     # Plot random images in wandb table
 
     if channels == 1:
