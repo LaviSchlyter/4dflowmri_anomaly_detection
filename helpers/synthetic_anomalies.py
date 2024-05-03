@@ -571,14 +571,28 @@ if __name__ == '__main__':
     config['preprocess_method'] = 'masked_slice' 
 
     # Load the validation data on which we apply the synthetic anomalies
-    #val_masked_sliced_images_from_48_to_58 # '_without_rotation_without_cs_skip_updated_ao_S10', _with_rotation_only_cs_skip_updated_ao_S10
-    suffix = '_without_rotation_with_cs_skip_updated_ao_S10'  #_without_rotation_with_cs_skip_updated_ao_S10
+    # '_without_rotation_without_cs_skip_updated_ao_S10', _with_rotation_only_cs_skip_updated_ao_S10
+    suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm'  #_without_rotation_with_cs_skip_updated_ao_S10
+    only_compressed_sensing = False
+    include_compressed_sensing = True
+
+    if suffix.__contains__('only_cs'):
+        only_compressed_sensing = True
+        
+    elif suffix.__contains__('without_cs'):
+        include_compressed_sensing = False
+
+    
+
+    
     #idx_start_vl = 35
     #idx_end_vl = 42
-    idx_start_vl = 41
-    idx_end_vl = 51
-    _, images_vl, _ = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 1, idx_start_vl = idx_start_vl, idx_end_vl = idx_end_vl, idx_start_ts = 0, idx_end_ts = 1, suffix = suffix)
-    
+    idx_start_vl = 10
+    idx_end_vl = 14
+    #idx_start_vl = 41
+    #idx_end_vl = 51
+    data_dict = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 1, idx_start_vl = idx_start_vl, idx_end_vl = idx_end_vl, idx_start_ts = 0, idx_end_ts = 1, suffix = suffix, include_compressed_sensing = include_compressed_sensing, only_compressed_sensing = only_compressed_sensing)
+    images_vl = data_dict['images_vl']
     #images_vl = h5py.File('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/val_with_rotation_without_cs_masked_sliced_images_from_35_to_42.hdf5','r')['sliced_images_val'][:]
 
     # Create synthetic anomalies
@@ -592,16 +606,7 @@ if __name__ == '__main__':
     
     deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
     
-    #data = load_create_syntetic_data(data = images_vl,
-    #                    deformation_list = deformation_list,
-    #                    preprocessing_method = config['preprocess_method'],
-    #                    idx_start = 48,
-    #                    idx_end = 58,
-    #                    force_overwrite=False,
-    #                    note = 'without_noise_cube_3')
-    #
-    # decreased_interpolation_factor_cube_3
-    # without_noise_cube_3
+  
     
 
 
