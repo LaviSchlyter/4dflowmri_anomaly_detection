@@ -179,11 +179,120 @@ def apply_blending(input_images, images_for_blend, mask_blending):
         blended_images = np.transpose(blended_images, (0,2,3,4,5,1))
     return blended_images, anomaly_masks
 
+## ==================================================================
+# ==================================================================
+# Compute the XYZ Euler angles and trace for each 3x3 rotation matrix in a batch
+# ==================================================================
+## ==================================================================
+
+
+
+def compute_euler_angles_xyz_and_trace(rotation_matrices):
+    """
+    Computes the XYZ Euler angles and trace for each 3x3 rotation matrix in a batch.
+    Assumes the rotation_matrices are in shape [batch_size, 3, 3].
+
+    :param rotation_matrices: A batch of 3x3 rotation matrices.
+    :return: A tuple of (euler_angles, traces), where euler_angles is a tensor of shape [batch_size, 3]
+             containing the XYZ Euler angles for each matrix, and traces is a tensor of shape [batch_size, 1]
+             containing the trace of each matrix.
+    """
+    batch_size = rotation_matrices.size(0)
+    euler_angles = torch.zeros(batch_size, 3, device=rotation_matrices.device)  # [batch_size, 3] for XYZ Euler angles
+    traces = torch.zeros(batch_size, 1, device=rotation_matrices.device)  # [batch_size, 1] for trace
+
+    for i in range(batch_size):
+        matrix = rotation_matrices[i]
+
+        # Compute trace
+        traces[i] = torch.trace(matrix)
+
+        # Compute Euler angles (XYZ rotation sequence)
+        sy = torch.sqrt(matrix[0, 0] ** 2 + matrix[1, 0] ** 2)
+        singular = sy < 1e-6
+
+        if not singular:
+            x = torch.atan2(-matrix[1, 2], matrix[2, 2])
+            y = torch.atan2(matrix[0, 2], sy)
+            z = torch.atan2(-matrix[0, 1], matrix[0, 0])
+        else:
+            x = torch.atan2(-matrix[1, 2], matrix[1, 1])
+            y = torch.atan2(matrix[0, 2], sy)
+            z = 0
+
+        euler_angles[i] = torch.tensor([x, y, z], device=rotation_matrices.device)
+
+    dict_results = {'euler_angles': euler_angles, 'trace': traces}
+
+    return dict_results
+
+
+
+
+
 # ==================================================================
 # ==================================================================
 # Compute losses
 # ==================================================================
 # ==================================================================
+
+def compute_losses(input_images, output_dict, config, input_dict= None):
+    # Compute the standard VAE losses
+    gen_loss = l2loss(input_images, output_dict['decoder_output'])
+    res_loss = torch.zeros_like(gen_loss)  # Assuming residual loss is computed elsewhere or not needed here
+    lat_loss = kl_loss_1d(output_dict['mu'], output_dict['z_std'])
+    gen_factor_loss = config['gen_loss_factor'] * gen_loss
+
+    # Initialize auxiliary losses
+    euler_loss = torch.tensor(0.0)
+    trace_loss = torch.tensor(0.0)
+
+    # Check if the model is 'conv_enc_dec_aux' and compute auxiliary losses
+    if config['model'] == 'conv_enc_dec_aux':
+        # Assuming you have ground truth values for Euler angles and trace
+        true_euler_angles = input_dict['euler_angles']
+        true_trace = input_dict['trace']
+
+        # Compute auxiliary losses
+        predicted_euler_angles = output_dict['euler_angles']
+        predicted_trace = output_dict['trace']
+        
+        
+        #euler_loss = l2loss(predicted_euler_angles, true_euler_angles)
+        #trace_loss = l2loss(predicted_trace, true_trace)
+        # Use MSE loss for Euler angles and trace
+        euler_loss = torch.mean((predicted_euler_angles - true_euler_angles) ** 2, dim=1)
+        trace_loss = torch.mean((predicted_trace - true_trace) ** 2, dim=1)
+
+        # Factor to adjust the importance of auxiliary losses
+        aux_loss_factor = config.get('aux_loss_factor', 1.0)
+
+        # Incorporate auxiliary losses into the total loss
+        total_aux_loss = aux_loss_factor * (euler_loss + trace_loss)
+    else:
+        total_aux_loss = torch.tensor(0.0)
+
+    # Compute total loss
+    total_loss = torch.mean(gen_factor_loss + lat_loss + total_aux_loss)
+
+    # For validation loss, you might consider including or excluding the auxiliary losses
+    val_loss = torch.mean(gen_loss + lat_loss + total_aux_loss)
+
+    # Save the losses in a dictionary
+    dict_loss = {
+        'loss': total_loss,
+        'val_loss': val_loss,
+        'gen_factor_loss': gen_factor_loss,
+        'gen_loss': gen_loss,
+        'res_loss': res_loss,
+        'lat_loss': lat_loss,
+        'euler_loss': euler_loss,
+        'trace_loss': trace_loss,
+        'total_aux_loss': total_aux_loss
+    }
+
+    return dict_loss
+
 
 def compute_losses_VAE(input_images, output_dict, config):
     """
@@ -251,7 +360,12 @@ def normalize_image(image):
   
     return normalized_image
 
-def normalize_image_new(image):
+from scipy.ndimage import gaussian_filter
+
+
+
+import numpy as np
+def normalize_image_new(image, with_percentile = None, with_set_range = None):
 
     # ===============
     # initialize with zeros
@@ -270,23 +384,43 @@ def normalize_image_new(image):
     # extract the velocities in the 3 directions
     velocity_image = np.array(image[...,1:4])
 
-    # denoise the velocity vectors
-    velocity_image_denoised = gaussian_filter(velocity_image, 0.5)
+    # denoise the velocity vectors on the spatial and time dimensions but not across channels
+    velocity_image_denoised = gaussian_filter(velocity_image, sigma=(0.5,0.5,0.5,0.5,0))
 
     # compute per-pixel velocity magnitude
     velocity_mag_image = np.linalg.norm(velocity_image_denoised, axis=-1)
 
-    # velocity_mag_array = np.sqrt(np.square(velocity_arrays[...,0])+np.square(velocity_arrays[...,1])+np.square(velocity_arrays[...,2]))
-    # find max value of 95th percentile (to minimize effect of outliers) of magnitude array and its index
-    # vpercentile_min = np.percentile(velocity_mag_image, 5)
-    # vpercentile_max = np.percentile(velocity_mag_image, 95)
+    if with_percentile is not None and len(with_percentile) == 2:
+        
+        vpercentile_min = np.percentile(velocity_image_denoised, with_percentile[0])
+        vpercentile_max = np.percentile(velocity_image_denoised, with_percentile[1])
 
-    normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
-    normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
-    normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
+        # Normalize the velocity vectors
+        normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
+        normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
+        normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
 
+        # Clip the values to be in the range [-1,1]
+        normalized_image = np.clip(normalized_image, -1, 1)
+    
+    elif with_set_range is not None and len(with_set_range) == 2:
+            
+            # Values will already be negative so I can just divide by the postive value
+            # Normalize the velocity vectors
+            normalized_image[...,1] = velocity_image_denoised[...,0]/with_set_range[1]
+            normalized_image[...,2] = velocity_image_denoised[...,1]/with_set_range[1]
+            normalized_image[...,3] = velocity_image_denoised[...,2]/with_set_range[1]
+    
+
+    else:    
+
+        normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
+        normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
+        normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
 
     return normalized_image
+
+
 # ==================================================================    
 # ==================================================================    
 def make_dir_safely(dirname):
