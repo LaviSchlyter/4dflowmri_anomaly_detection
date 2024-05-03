@@ -3,6 +3,8 @@ import h5py
 import numpy as np
 import sys
 from skimage.morphology import skeletonize_3d, dilation, cube, binary_erosion
+from skimage.restoration import unwrap_phase
+
 
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -123,6 +125,8 @@ def interpolate_and_slice(image,
         sitk_slice = output_dict['resampled_sitk_image']
         geometry_dict[f"slice_{i}"]['transform'] = output_dict['transform']
         geometry_dict[f"slice_{i}"]['origin'] = output_dict['origin']
+        # Add centerline points to geometry_dict
+        geometry_dict[f"slice_{i}"]['centerline_points'] = points[i]
         np_image = sitk.GetArrayFromImage(sitk_slice).transpose(2, 1, 0)
         slices.append(np_image)
 
@@ -644,7 +648,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
                            suffix ='',
                            updated_ao = False,
                            skip = True,
-                           smoothness = 10):
+                           smoothness = 10,
+                           unwrapped = False):
 
     # ==========================================
     # Study the the variation in the sizes along various dimensions (using the function 'find_shapes'),
@@ -766,6 +771,9 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # If test then add label depending on if anomalous or not, 1 or 0
     if train_test == 'test':
         dataset['labels_%s' % train_test] = hdf5_file.create_dataset("labels_%s" % train_test, (end_shape[2]*num_images_to_load,), dtype='uint8')
+
+    # Add the geometry for backtransformation, each slice has its own geometry
+    dataset['rotation_matrix'] = hdf5_file.create_dataset("rotation_matrix", (end_shape[2]*num_images_to_load,3,3), dtype='float32')
     
     cnn_predictions = True
     i = 0
@@ -802,12 +810,76 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         temp_for_stack = [segmented for i in range(time_steps)]
         segmented = np.stack(temp_for_stack, axis=3)
 
+        image = image.astype(float)
+
+        if unwrapped:
+
+            # Create a masked array where the background is masked
+            segmented_bool = abs(segmented - 1).astype(bool)
+            segmented_bool = np.expand_dims(segmented_bool, axis=4)
+            # repeat the segmented_boolmentation mask for each channel
+            segmented_bool = np.repeat(segmented_bool, 4, axis=4)
+
+            # Make a masked array, where the mask is True where the image is True
+
+            masked_image = np.ma.masked_array(image, segmented_bool)
+
+            # Unwrapping the phase
+            unwrapped_image = np.zeros_like(masked_image)
+            for channel in range(1, masked_image.shape[-1]):
+                # Iterate over each time step
+                for t_ in range(masked_image.shape[3]):
+                    # Extract the example_image for the current channel and time step
+                    example_image = masked_image[..., t_, channel]
+
+                    # Scale the intensity values to the range of phase (-pi to pi)
+                    scaled_phase = (example_image / 4096.0) * 2.0 * np.pi - np.pi
+
+                    # Perform phase unwrapping
+                    unwrapped_phase = unwrap_phase(scaled_phase, wrap_around=False)
+
+                    # Scale the unwrapped phase values back to the range of intensity 
+                    scaled_intensity = ((unwrapped_phase + np.pi) / (2.0 * np.pi)) * 4096.0
+
+                    # Assign the restored intensity values back to the original image array
+                    unwrapped_image[..., t_, channel] = scaled_intensity
+
+            # Clip the range of intensity values 25 % more and less than the original range [0, 4096] --> [-1024, 5120]
+            # This aims to account for some noise in the unwrapping process
+            unwrapped_image = np.clip(unwrapped_image, -1024, 5120)
+
+            # Substract 2048 to center the values around 0 for the velocity channels
+            image[...,1:] -= 2048.0
+            
+            # Add the first channel (magnitude) back to the unwrapped image
+            unwrapped_image[...,0] = masked_image[...,0]
+
+            #Fill masked values with 0
+            image = np.ma.filled(unwrapped_image, 0.0)
+        else:
+            # Subtract 2048 to center the values around 0 for the velocity channels
+            image[...,1:] -= 2048.0
+            temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
+            temp_images_vx = image[:,:,:,:,1] * segmented
+            temp_images_vy = image[:,:,:,:,2] * segmented
+            temp_images_vz = image[:,:,:,:,3] * segmented
+            image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
+
+        # Normalize the image
+
+        image = normalize_image_new(image, with_set_range=[-2048, 2048])
+
+
+        """
+        Original approach
+        Normalize before segmentation
+        
+       
         # normalize image to -1 to 1
         image = normalize_image_new(image)
         seg_shape = list(segmented.shape)
         seg_shape.append(image.shape[-1])
         image = crop_or_pad_Bern_slices(image, seg_shape)
-
 
         temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
         temp_images_vx = image[:,:,:,:,1] * segmented
@@ -818,6 +890,189 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
         
 
+        
+        Second approach
+        Normalize after segmentation (I also change to float) and set everything to zero
+        
+
+        image = image.astype(float)
+        segmented_bool = abs(segmented - 1).astype(bool)
+        if unwrapped:
+            
+            segmented_bool = np.expand_dims(segmented_bool, axis=4)
+            segmented_bool = np.repeat(segmented_bool, 4, axis=4)
+            
+            masked_image = np.ma.masked_array(image, segmented_bool)
+
+
+            unwrapped_image = np.zeros_like(masked_image)
+            for channel in range(1, masked_image.shape[-1]):
+                # Iterate over each time step
+                for t_ in range(masked_image.shape[3]):
+                    # Extract the example_image for the current channel and time step
+                    example_image = masked_image[..., t_, channel]
+
+                    # Scale the intensity values to the range of phase (-pi to pi)
+                    scaled_phase = (example_image / 4096) * 2 * np.pi - np.pi
+
+                    # Perform phase unwrapping
+                    unwrapped_phase = unwrap_phase(scaled_phase, seed=None, wrap_around=False)
+
+                    # Scale the unwrapped phase values back to the range of intensity 
+                    scaled_intensity = ((unwrapped_phase + np.pi) / (2 * np.pi)) * 4096
+
+                    # Assign the restored intensity values back to the original image array
+                    unwrapped_image[..., t_, channel] = scaled_intensity
+
+            # Give values to the masked unwrapped image
+            unwrapped_image = np.ma.filled(unwrapped_image, 0.0)
+            # Unwrapping is only done on the velocity channels 
+            image[...,1:] = unwrapped_image[...,1:]
+            # We therefore need to mask with segmentation the first channel
+            image[...,0] = image[...,0] * segmented
+
+        else:
+            
+            temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
+            temp_images_vx = image[:,:,:,:,1] * segmented
+            temp_images_vy = image[:,:,:,:,2] * segmented
+            temp_images_vz = image[:,:,:,:,3] * segmented
+            # recombine the images
+            image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
+        
+
+        # normalize image to -1 to 1
+        if unwrapped:
+            # Normalize using 2 nad 98 th percentile
+            image = normalize_image_new(image, with_percentile=True)
+            # Set all background to zero
+            image[segmented_bool] = 0
+            
+        else:
+            image = normalize_image_new(image)
+            # Set all background to zero
+            image[segmented_bool] = 0
+
+
+
+
+        # End second approach
+        
+
+        # Third approach
+        
+        Original approach
+        Normalize before segmentation for velocity channels but not magnitude channel
+        
+        
+
+        
+        # Remove from the first channel the background
+
+        mask_mag_channel = np.expand_dims(abs(segmented -1), axis=-1)
+        # We don't want to affect velocity channels
+        mask_zeros_vel_channel = np.zeros_like(mask_mag_channel)
+        # Repeat for each channel and concatenate
+        mask_zeros_vel_channel = np.repeat(mask_zeros_vel_channel, 3, axis=-1)
+        mask = np.concatenate([mask_mag_channel, mask_zeros_vel_channel], axis=-1)
+
+        image_mag_masked = np.ma.masked_array(image, mask=mask)
+
+        # Normalize all channels
+        image = normalize_image_new(image_mag_masked)
+
+        temp_images_intensity = image[:,:,:,:,0] * segmented # change these back if it works
+        temp_images_vx = image[:,:,:,:,1] * segmented
+        temp_images_vy = image[:,:,:,:,2] * segmented
+        temp_images_vz = image[:,:,:,:,3] * segmented
+
+        # recombine the images
+        image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
+
+        # End of third approach
+
+        
+
+        # Fourth approach
+        
+        Unwrap and then normalize before segmentation for velocity channels but not magnitude channel
+        1. Make a masked array that affects only the vel channels 
+        2. Unwrap the phase of the masked array
+        3. Fill the masked array with the unwrapped phase
+        4. Create a mask where the magnitude channel is masked with segmentation
+        5. Normalize the whole image
+        6. Segment the last three channels        
+        
+        
+        
+
+        if unwrapped:
+            segmented_bool = abs(segmented - 1).astype(bool)
+            segmented_bool = np.expand_dims(segmented_bool, axis=4)
+            segmented_bool = np.repeat(segmented_bool, 4, axis=4)
+            # We want to mask the whole first channel and the velocities of segmentation
+            segmented_bool[...,0] = True
+
+            masked_image = np.ma.masked_array(image, segmented_bool)
+
+            unwrapped_image = np.zeros_like(masked_image)
+            for channel in range(1, masked_image.shape[-1]):
+                # Iterate over each time step
+                for t_ in range(masked_image.shape[3]):
+                    # Extract the example_image for the current channel and time step
+                    example_image = masked_image[..., t_, channel]
+
+                    # Scale the intensity values to the range of phase (-pi to pi)
+                    scaled_phase = (example_image / 4096) * 2 * np.pi - np.pi
+
+                    # Perform phase unwrapping
+                    unwrapped_phase = unwrap_phase(scaled_phase, seed=None, wrap_around=False)
+
+                    # Scale the unwrapped phase values back to the range of intensity 
+                    scaled_intensity = ((unwrapped_phase + np.pi) / (2 * np.pi)) * 4096
+
+                    # Assign the restored intensity values back to the original image array
+                    unwrapped_image[..., t_, channel] = scaled_intensity
+
+            # Create a mask for the non-existent values in the unwrapped image
+            mask_unwrapped = np.ma.getmask(unwrapped_image)
+
+            # Create a mask array where we need to fill in the image
+            fill_masked_image = np.ma.masked_array(image, mask=~mask_unwrapped)
+
+            # Combine the masked unwrapped image with the masked original image
+            image = unwrapped_image.filled(fill_value=0) + fill_masked_image.filled(fill_value=0)
+
+            # Use segmentation mask for first channel
+            image[...,0] = image[...,0] * segmented
+
+            # Normalize the whole image
+            image = normalize_image_new(image, with_percentile=True)
+
+        else:
+            image = normalize_image_new(image, with_percentile=False)
+
+        
+        
+        
+        # We can now segment the last three channels
+        temp_images_intensity = image[:,:,:,:,0] * segmented
+        temp_images_vx = image[:,:,:,:,1] * segmented
+        temp_images_vy = image[:,:,:,:,2] * segmented
+        temp_images_vz = image[:,:,:,:,3] * segmented
+        # recombine the images
+        image = np.stack([temp_images_intensity,temp_images_vx,temp_images_vy,temp_images_vz], axis=4)
+
+
+        """
+
+
+        
+
+
+
+        
+
         if cnn_predictions:
             points_ = skeleton_points(segmented_original, dilation_k = 0)
             points_dilated = skeleton_points(segmented_original, dilation_k = 4,erosion_k = 4)
@@ -826,18 +1081,6 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
             points_dilated = skeleton_points(segmented_original, dilation_k = 2,erosion_k = 2)
         points = points_dilated.copy()
 
-        """
-
-        # Average the segmentation over time (the geometry should be the same over time)
-        avg = np.average(segmented_original, axis = 3)
-
-        # Compute the centerline points of the skeleton
-        skeleton = skeletonize_3d(avg[:,:,:])
-
-        # Get the points of the centerline as an array
-        points = np.array(np.where(skeleton != 0)).transpose([1,0])
-        """
-    
 
          
         if updated_ao:
@@ -907,6 +1150,13 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
         if suffix.__contains__('_without_rotation'):
             logging.info('Not rotating the vectors')
             straightened_rotated_vectors = straightened.copy()
+            
+            # We still want to save the rotation matrix that would be used to straighten the vectors
+            for z_ in range(straightened.shape[2]):
+                for t_ in range(straightened.shape[3]):
+                    rotation_matrix_not_inverted = np.array(slice_dict['geometry_dict'][f'slice_{z_}']['transform'].GetMatrix()).reshape(3,3)
+                # Populate the rotation matrix dataset
+                dataset['rotation_matrix'][i*end_shape[2] + z_,:,:] = rotation_matrix_not_inverted
         else:
             logging.info('Rotating the vectors')
             # We need to rotate the vectors as well loop through slices
@@ -914,7 +1164,11 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
             for z_ in range(straightened.shape[2]):
                 for t_ in range(straightened.shape[3]):
                     rotation_matrix = np.array(slice_dict['geometry_dict'][f'slice_{z_}']['transform'].GetInverse().GetMatrix()).reshape(3,3)
+                    rotation_matrix_not_inverted = np.array(slice_dict['geometry_dict'][f'slice_{z_}']['transform'].GetMatrix()).reshape(3,3)
                     straightened_rotated_vectors[:,:,z_,t_,1:] = rotate_vectors(straightened[:,:,z_,t_,1:], rotation_matrix)
+                # Populate the rotation matrix dataset
+                dataset['rotation_matrix'][i*end_shape[2] + z_,:,:] = rotation_matrix_not_inverted
+                    
 
         image_out = straightened_rotated_vectors
         # Save the geometries for backtransformation with name of patient
@@ -960,7 +1214,8 @@ def load_masked_data_sliced(basepath,
               suffix ='',
               updated_ao = False,
               skip = True,
-              smoothness = 10):
+              smoothness = 10,
+              unwrapped = False):
 
     # ==========================================
     # define file paths for images and labels
@@ -984,7 +1239,8 @@ def load_masked_data_sliced(basepath,
                                suffix = suffix,
                                 updated_ao = updated_ao,
                                 skip = skip,
-                                smoothness = smoothness
+                                smoothness = smoothness,
+                                unwrapped = unwrapped
                                )
     else:
         logging.info('Already preprocessed this configuration. Loading now...')
@@ -1522,16 +1778,47 @@ if __name__ == '__main__':
 
     # Make sure that any patient from the training/validation set is not in the test set
     verify_leakage()
+    #masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=41, train_test='train', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation_all = load_masked_data_sliced(basepath, idx_start=41, idx_end=51, train_test='val', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=54, train_test='test', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    
+    #masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='train', suffix = '_with_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='val', suffix = '_with_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='test', suffix = '_with_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='train', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='val', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='test', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10)
+    
+    
+    #masked_sliced_data_train_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='train', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10, unwrapped = False)
+    #masked_sliced_data_validation_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='val', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10, unwrapped = False)
+    #masked_sliced_data_test_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='test', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10, unwrapped = False)
+    #
+    #masked_sliced_data_train_only_cs_unwrapped = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='train', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm_unwrapped', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10, unwrapped = True)
+    #masked_sliced_data_validation_only_cs_unwrapped = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='val', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm_unwrapped', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10, unwrapped = True)
+    #masked_sliced_data_test_only_cs_unwrapped = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='test', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm_unwrapped', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= True, skip = True, updated_ao = True, smoothness = 10, unwrapped = True)
+    
+
+
+
+
 
     #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-    masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=41, train_test='train', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-    #masked_sliced_data_train_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=10, train_test='train', suffix = '_without_rotation_only_cs_skip_updated_ao_S10', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=41, train_test='train', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=10, train_test='train', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train_only_cs_unwrapped = load_masked_data_sliced(basepath, idx_start=0, idx_end=10, train_test='train', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm_unwrapped', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10, unwrapped=True)
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     #masked_sliced_data_validation_all = load_masked_data_sliced(basepath, idx_start=41, idx_end=51, train_test='val', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-    #masked_sliced_data_validation_only_cs = load_masked_data_sliced(basepath, idx_start=10, idx_end=14, train_test='val', suffix = '_without_rotation_only_cs_skip_updated_ao_S10', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation_only_cs = load_masked_data_sliced(basepath, idx_start=10, idx_end=14, train_test='val', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_validation_only_cs_unwrapped = load_masked_data_sliced(basepath, idx_start=10, idx_end=14, train_test='val', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm_unwrapped', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10, unwrapped=True)
     #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_with_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     #masked_sliced_data_test_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=54, train_test='test', suffix = '_without_rotation_with_cs_skip_updated_ao_S10', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-    #masked_sliced_data_test_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=17, train_test='test', suffix = '_without_rotation_only_cs_skip_updated_ao_S10', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test_only_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=17, train_test='test', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_test_only_cs_unwrapped = load_masked_data_sliced(basepath, idx_start=0, idx_end=17, train_test='test', suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm_unwrapped', include_compressed_sensing = True, only_compressed_sensing=True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10, unwrapped=True)
     #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)    
     #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test', suffix = '_without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
@@ -1541,31 +1828,4 @@ if __name__ == '__main__':
     #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=48, idx_end=58, train_test='val', suffix = '_with_rotation', include_compressed_sensing = True, force_overwrite= True)    
     #masked_sliced_data_test = load_masked_data_sliced(basepath, idx_start=0, idx_end=46, train_test='test', suffix = '_without_rotation', include_compressed_sensing = True, force_overwrite= False)
     #masked_sliced_data_test_cs = load_masked_data_sliced(basepath, idx_start=0, idx_end=8, train_test='test', suffix='_compressed_sensing')    
-
-    # This was experimental with instead of having zeros in the slices, we remove the subjects for which preprocessing ao didn't work
-    #masked_sliced_data_train = load_masked_data_sliced(basepath, idx_start=0, idx_end=34, train_test='train', suffix = '_without_some_data_redid_other_version__without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-    #masked_sliced_data_validation = load_masked_data_sliced(basepath, idx_start=34, idx_end=41, train_test='val', suffix = '_without_some_data_redid_other_version__without_rotation_without_cs_skip_updated_ao_S10', include_compressed_sensing = False, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
-
-    # Old things
-    #masked_data_train = load_masked_data(basepath, idx_start=0, idx_end=35, train_test='train')
-    #masked_data_validation = load_masked_data(basepath, idx_start=35, idx_end=42, train_test='val')
-    #masked_data_test = load_masked_data(basepath, idx_start=0, idx_end=20, train_test='test')
-    #
-#
-    #sliced_data_train = load_cropped_data_sliced(basepath, idx_start=0, idx_end=35, train_test='train')
-    #sliced_data_validation = load_cropped_data_sliced(basepath, idx_start=35, idx_end=42, train_test='val')
-    #sliced_data_test = load_cropped_data_sliced(basepath, idx_start=0, idx_end=34, train_test='test')
     
-    
-
-    #sliced_data_full_aorta_train = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
-    #sliced_data_full_aorta_validation = load_cropped_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
-    #sliced_data_full_aorta_test = load_cropped_data_sliced_full_aorta(basepath, idx_start=0, idx_end=20, train_test='test')
-    
-    #masked_sliced_data_full_aorta_train = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=35, train_test='train')
-    #masked_sliced_data_full_aorta_validation = load_masked_data_sliced_full_aorta(basepath, idx_start=35, idx_end=42, train_test='val')
-    #masked_sliced_data_full_aorta_test = load_masked_data_sliced_full_aorta(basepath, idx_start=0, idx_end=34, train_test='test')
-
-    
-    
-
