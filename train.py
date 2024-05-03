@@ -22,7 +22,7 @@ from helpers.run import train, load_model, evaluate
 from helpers.data_loader import load_data, load_syntetic_data
 
 
-SEED = 15
+SEED = 5
 torch.manual_seed(SEED)
 np.random.seed(SEED)
 torch.cuda.manual_seed_all(SEED)
@@ -34,7 +34,8 @@ torch.backends.cudnn.benchmark = False
 # ============== IMPORT MODELS ==================================================
 # =================================================================================
 
-from models.vae import VAE, VAE_linear, VAE_convT
+from models.vae import VAE, VAE_linear, VAE_convT, ConvWithAux, ConvWithEncDecAux,ConvWithDeepAux, ConvWithDeepEncDecAux, ConvWithDeeperEncDecAux, ConvWithDeeperBNEncDecAux
+    
 from models.condconv import CondVAE, CondConv
 
 # =================================================================================
@@ -98,17 +99,21 @@ if __name__ ==  "__main__":
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}-n_experts{config['n_experts']}"
     elif config['model'] == 'cond_conv':
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}-n_experts{config['n_experts']}"
+    elif (config['model'] == 'conv_with_aux') or (config['model'] == 'deep_conv_with_aux'):
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
+    elif config['model'].__contains__('conv_enc_dec_aux'):
+        config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
     else:
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{str(config['gen_loss_factor'])}"
     
     # Add extra note to name
     if len(config['note']) > 0:
         config['model_name'] = config['model_name'] + f"{'_' + config['note']}"
-    if config['use_synthetic_validation']:
-        if len(config['synthetic_data_note']) > 0:
-            config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}" + f"{'_' + config['synthetic_data_note']}"    
-        else:
-            config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}"
+
+    if len(config['synthetic_data_note']) > 0:
+        config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}" + f"{'_' + config['synthetic_data_note']}"    
+    else:
+        config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}"
     wandb_mode = "online" # online/ disabled
     tag = ''
     if config['self_supervised']:
@@ -117,18 +122,17 @@ if __name__ ==  "__main__":
         tag = 'reconstruction'
 
     if config['use_synthetic_validation']:
-        tags = [config['model'], 'synthetic_validation', f"{SEED}", config['validation_metric_format']]
+        tags = [config['model'], 'synthetic_validation', f"{SEED}", config['validation_metric_format'], "fixed_anomaly_seed"]
         tags.append(tag)
     else:
-        tags = [config['model'], f"{SEED}"]
+        tags = [config['model'], f"{SEED}","fixed_anomaly_seed"]
         tags.append(tag)
-
-    # Check in config file if we include compressed sensing data
-    if config['with_compressed_sensing']:
-        tags.append('with_compressed_sensing')
-        config['model_name'] = config['model_name'] + '_cs'
-
+        if config['use_synthetic_validation']:
+            config['model_name'] = config['model_name'] + '_synthetic_validation'
     
+    # ================================================
+            
+
     with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
         config = wandb.config
         print('after_init', config['model_name'])
@@ -159,9 +163,11 @@ if __name__ ==  "__main__":
         verify_leakage()
 
         # Load the data
-        images_tr, images_vl, _ = load_data(config, config_sys, idx_start_tr=config['idx_start_tr'], idx_end_tr=config['idx_end_tr'], idx_start_vl=config['idx_start_vl'], idx_end_vl=config['idx_end_vl'], suffix = config['suffix_data'])
+        data_dict = load_data(config, config_sys, idx_start_tr=config['idx_start_tr'], idx_end_tr=config['idx_end_tr'], idx_start_vl=config['idx_start_vl'], idx_end_vl=config['idx_end_vl'], suffix = config['suffix_data'])
+        images_tr = data_dict['images_tr']
+        images_vl = data_dict['images_vl']
 
-        # Load synthetic data for validation if needed
+        # Load s data for validation if needed
         if config['use_synthetic_validation']:
             images_vl = load_syntetic_data(preprocess_method = config['preprocess_method'], idx_start=config['idx_start_vl'], idx_end=config['idx_end_vl'], sys_config = config_sys, note = config['synthetic_data_note'])
             logging.info(f"Using synthetic validation data with shape: {images_vl['images'].shape}")
@@ -195,6 +201,40 @@ if __name__ ==  "__main__":
                 model = CondConv(in_channels=4, gf_dim=config['gf_dim'], out_channels=1, num_experts=config['n_experts']).to(device)
             else:
                 model = CondConv(in_channels=4, gf_dim=config['gf_dim'], out_channels=4, num_experts=config['n_experts']).to(device)
+        elif config['model'] == 'conv_with_aux':
+            if config['self_supervised']:
+                model = ConvWithAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = ConvWithAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+
+        elif config['model'] == 'conv_enc_dec_aux':
+            if config['self_supervised']:
+                model = ConvWithEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = ConvWithEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+        elif config['model'] == 'deep_conv_with_aux':
+            if config['self_supervised']:
+                model = ConvWithDeepAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = ConvWithDeepAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+
+        elif config['model'] == 'deep_conv_enc_dec_aux':
+            if config['self_supervised']:
+                model = ConvWithDeepEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = ConvWithDeepEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+
+        elif config['model'] == 'deeper_conv_enc_dec_aux':
+            if config['self_supervised']:
+                model = ConvWithDeeperEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = ConvWithDeeperEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+
+        elif config['model'] == 'deeper_bn_conv_enc_dec_aux':
+            if config['self_supervised']:
+                model = ConvWithDeeperBNEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
+            else:
+                model = ConvWithDeeperBNEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
         else:
             raise ValueError(f"Unknown model: {config['model']}")
         
@@ -212,11 +252,12 @@ if __name__ ==  "__main__":
         logging.info('Details of the model architecture')
         logging.info('=======================================================')
     
-        input_dict= {'input_images': torch.zeros((1, 4, 32, 32, 24)).to(device).float(), 'batch_z_slice': torch.zeros((1,)).to(device).float(), 'adjacent_batch_slices':torch.zeros((1, 12, 32, 32, 24)).to(device)}
+        input_dict= {'input_images': torch.zeros((1, 4, 32, 32, 24)).to(device).float(), 'batch_z_slice': torch.zeros((1,)).to(device).float(), 
+                     'adjacent_batch_slices':torch.zeros((1, 12, 32, 32, 24)).to(device), 'rotation_matrix': torch.zeros((1, 3, 3)).to(device).float()}
         logging.info(summary(model, input_dict, show_input=False))
 
         
         # Train 
         optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'], betas=(config['beta1'], config['beta2']))
-        train(model, images_tr, images_vl, log_dir, already_completed_epochs, config, device, optimizer)
+        train(model, data_dict, images_vl, log_dir, already_completed_epochs, config, device, optimizer)
 

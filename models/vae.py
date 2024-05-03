@@ -553,7 +553,7 @@ class Decoder_linear(nn.Module):
         return conv2
 
 class Decoder(nn.Module):
-    def __init__(self, gf_dim = 8, out_channels = 4, apply_initialization = False):
+    def __init__(self, gf_dim = 8, aux_output_dim = 0, out_channels = 4, apply_initialization = False):
         super(Decoder, self).__init__()
         
         self.gf_dim = gf_dim
@@ -564,8 +564,10 @@ class Decoder(nn.Module):
         #b_init = nn.init.constant_
         #gamma_init = nn.init.ones_
 
+        self.resp1_input_dim = gf_dim * 32 + aux_output_dim  # Adjusted input dimension
+
         # Res-Blocks (for effective deep architecture)
-        self.resp1 = ResBlockUp(gf_dim * 32, gf_dim * 16, stride=(2,2,1), output_padding = (1,1,0))
+        self.resp1 = ResBlockUp(self.resp1_input_dim, gf_dim * 16, stride=(2,2,1), output_padding = (1,1,0))
         self.res0 = ResBlockUp(gf_dim * 16, gf_dim * 8, stride=(2,2,2), output_padding = (1,1,1))
         self.res1 = ResBlockUp(gf_dim * 8, gf_dim * 4, stride=(2,2,2), output_padding = (1,1,1))
         self.res2 = ResBlockUp(gf_dim * 4, gf_dim * 2, stride=(2,2,2), output_padding = (1,1,1))
@@ -642,13 +644,250 @@ class Decoder(nn.Module):
             nn.init.zeros_(m.bias)
 
 
+
+## Auxillary network for the rotation matrix 
+class DenseAuxNet(nn.Module):
+    """
+    Encoder-decoder network for analyzing 3x3 rotation matrices, predicting the trace and Euler angles.
+    
+    Inputs:
+        - 3x3 rotation matrix, flattened to a 9-element vector.
+    
+    Outputs:
+        - 4-element vector: 1 element for the trace of the matrix and 3 elements for the Euler angles.
+    
+    The encoder compresses the input to a lower-dimensional space, and the decoder reconstructs the target outputs.
+    """
+    def __init__(self, input_size:int = 9, output_size:int = 3) -> None:
+        super().__init__()
+        
+        self.fc1 = nn.Linear(input_size, 12)
+        self.fc2 = nn.Linear(12, 16)
+        self.fc3 = nn.Linear(16, output_size)
+
+    def forward(self, x):
+        # Flatten 3x3 rotation matrix to a 9-element vector
+        x = x.view(x.size(0), -1)  # Assuming x is [batch_size, 3, 3]
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        output = self.fc3(x)
+        
+        return output
+    
+## Auxillary network for the rotation matrix 
+class DenseDeepAuxNet(nn.Module):
+    """
+    Deep Encoder-decoder network for analyzing 3x3 rotation matrices, predicting the trace and Euler angles.
+    
+    Inputs:
+        - 3x3 rotation matrix, flattened to a 9-element vector.
+    
+    Outputs:
+        - 4-element vector: 1 element for the trace of the matrix and 3 elements for the Euler angles.
+    
+    The encoder compresses the input to a lower-dimensional space, and the decoder reconstructs the target outputs.
+    """
+    def __init__(self, input_size:int = 9, output_size:int = 3) -> None:
+        super().__init__()
+        
+        self.fc1 = nn.Linear(input_size, 32)
+        self.fc2 = nn.Linear(32, 64)
+        self.fc3 = nn.Linear(64, 128)
+        self.fc4 = nn.Linear(128, 256)
+        self.fc5 = nn.Linear(256, 128)
+        self.fc6 = nn.Linear(128, 64)
+        self.fc7 = nn.Linear(64, output_size)
+
+    def forward(self, x):
+        # Flatten 3x3 rotation matrix to a 9-element vector
+        x = x.view(x.size(0), -1)  # Assuming x is [batch_size, 3, 3]
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        x = F.relu(self.fc4(x))
+        x = F.relu(self.fc5(x))
+        x = F.relu(self.fc6(x))
+        output = self.fc7(x)
+        
+        return output
+
+
+class EncDecDeepAuxNet(nn.Module):
+    """
+    This class defines an encoder-decoder auxiliary network tailored for analyzing 3x3 rotation matrices.
+    The encoder compresses the rotation matrix into a compact representation, which the decoder then uses
+    to predict the trace and Euler angles of the matrix.
+
+    Input: 3x3 rotation matrix
+    Outputs: Trace of the matrix (1-element) and Euler angles (3-element vector)
+    """
+    def __init__(self, input_size:int=9, encoded_size:int=6) -> None:
+        super().__init__()
+        
+        # Encoder
+        self.encoder_fc1 = nn.Linear(input_size, 32)
+        self.encoder_fc2 = nn.Linear(32, 64)
+        self.encoder_fc3 = nn.Linear(64, 128)
+        self.encoder_fc4 = nn.Linear(128, encoded_size)
+        
+        # Decoder for Trace
+        self.decoder_trace_fc1 = nn.Linear(encoded_size, 32)
+        self.decoder_trace_fc2 = nn.Linear(32, 16)
+        self.decoder_trace_fc3 = nn.Linear(16, 8)
+        self.decoder_trace_fc4 = nn.Linear(8, 1)  
+        
+        # Decoder for Euler Angles
+        self.decoder_euler_fc1 = nn.Linear(encoded_size, 64)
+        self.decoder_euler_fc2 = nn.Linear(64, 32)
+        self.decoder_euler_fc3 = nn.Linear(32, 16)
+        self.decoder_euler_fc4 = nn.Linear(16, 3)  
+
+    def forward(self, x):
+        # Flatten the input 3x3 matrix to a 9-element vector
+        x = x.view(x.size(0), -1)
+        
+        # Encoder pathway
+        x = F.relu(self.encoder_fc1(x))
+        x = F.relu(self.encoder_fc2(x))
+        x = F.relu(self.encoder_fc3(x))
+        encoded = F.relu(self.encoder_fc4(x))
+        
+        # Decoder pathway for Trace
+        trace = F.relu(self.decoder_trace_fc1(encoded))
+        trace = F.relu(self.decoder_trace_fc2(trace))
+        trace = F.relu(self.decoder_trace_fc3(trace))
+        trace = self.decoder_trace_fc4(trace)
+        
+        # Decoder pathway for Euler Angles
+        euler_angles = F.relu(self.decoder_euler_fc1(encoded))
+        euler_angles = F.relu(self.decoder_euler_fc2(euler_angles))
+        euler_angles = F.relu(self.decoder_euler_fc3(euler_angles))
+        euler_angles = self.decoder_euler_fc4(euler_angles)
+        
+        return trace, euler_angles, encoded
+
+class EncDecDeepBNAuxNet(nn.Module):
+    """
+    This class defines an encoder-decoder auxiliary network tailored for analyzing 3x3 rotation matrices.
+    The encoder compresses the rotation matrix into a compact representation, which the decoder then uses
+    to predict the trace and Euler angles of the matrix.
+
+    Input: 3x3 rotation matrix
+    Outputs: Trace of the matrix (1-element) and Euler angles (3-element vector)
+    """
+    def __init__(self, input_size: int = 9, encoded_size: int = 6) -> None:
+        super().__init__()
+
+        # Encoder
+        self.encoder_fc1 = nn.Linear(input_size, 32)
+        self.encoder_fc2 = nn.Linear(32, 64)
+        self.encoder_fc3 = nn.Linear(64, 128)
+        self.encoder_fc4 = nn.Linear(128, encoded_size)
+
+        # Batch normalization for encoder
+        self.bn_encoder_fc1 = nn.BatchNorm1d(32)
+        self.bn_encoder_fc2 = nn.BatchNorm1d(64)
+        self.bn_encoder_fc3 = nn.BatchNorm1d(128)
+
+        # Decoder for Trace
+        self.decoder_trace_fc1 = nn.Linear(encoded_size, 32)
+        self.decoder_trace_fc2 = nn.Linear(32, 16)
+        self.decoder_trace_fc3 = nn.Linear(16, 8)
+        self.decoder_trace_fc4 = nn.Linear(8, 1)
+
+        # Decoder for Euler Angles
+        self.decoder_euler_fc1 = nn.Linear(encoded_size, 64)
+        self.decoder_euler_fc2 = nn.Linear(64, 32)
+        self.decoder_euler_fc3 = nn.Linear(32, 16)
+        self.decoder_euler_fc4 = nn.Linear(16, 3)
+
+        # Batch normalization for decoder
+        self.bn_decoder_trace_fc1 = nn.BatchNorm1d(32)
+        self.bn_decoder_trace_fc2 = nn.BatchNorm1d(16)
+        self.bn_decoder_trace_fc3 = nn.BatchNorm1d(8)
+
+        self.bn_decoder_euler_fc1 = nn.BatchNorm1d(64)
+        self.bn_decoder_euler_fc2 = nn.BatchNorm1d(32)
+        self.bn_decoder_euler_fc3 = nn.BatchNorm1d(16)
+
+    def forward(self, x):
+        # Flatten the input 3x3 matrix to a 9-element vector
+        x = x.view(x.size(0), -1)
+
+        # Encoder pathway
+        x = F.relu(self.bn_encoder_fc1(self.encoder_fc1(x)))
+        x = F.relu(self.bn_encoder_fc2(self.encoder_fc2(x)))
+        x = F.relu(self.bn_encoder_fc3(self.encoder_fc3(x)))
+        encoded = F.relu(self.encoder_fc4(x))
+
+        # Decoder pathway for Trace
+        trace = F.relu(self.bn_decoder_trace_fc1(self.decoder_trace_fc1(encoded)))
+        trace = F.relu(self.bn_decoder_trace_fc2(self.decoder_trace_fc2(trace)))
+        trace = F.relu(self.bn_decoder_trace_fc3(self.decoder_trace_fc3(trace)))
+        trace = self.decoder_trace_fc4(trace)
+
+        # Decoder pathway for Euler Angles
+        euler_angles = F.relu(self.bn_decoder_euler_fc1(self.decoder_euler_fc1(encoded)))
+        euler_angles = F.relu(self.bn_decoder_euler_fc2(self.decoder_euler_fc2(euler_angles)))
+        euler_angles = F.relu(self.bn_decoder_euler_fc3(self.decoder_euler_fc3(euler_angles)))
+        euler_angles = self.decoder_euler_fc4(euler_angles)
+
+        return trace, euler_angles, encoded
+
+class EncDecAuxNet(nn.Module):
+    """
+    This class defines an encoder-decoder auxiliary network tailored for analyzing 3x3 rotation matrices.
+    The encoder compresses the rotation matrix into a compact representation, which the decoder then uses
+    to predict the trace and Euler angles of the matrix.
+
+    Input: 3x3 rotation matrix
+    Outputs: Trace of the matrix (1-element) and Euler angles (3-element vector)
+    """
+    def __init__(self, input_size:int=9, encoded_size:int = 6) -> None:
+        super().__init__()
+        
+        # Encoder
+        self.encoder_fc1 = nn.Linear(input_size, 12)
+        self.encoder_fc2 = nn.Linear(12, encoded_size)
+        
+        # Decoder for Trace
+        self.decoder_trace_fc1 = nn.Linear(encoded_size, 4)
+        self.decoder_trace_fc2 = nn.Linear(4, 1)  
+        
+        # Decoder for Euler Angles
+        self.decoder_euler_fc1 = nn.Linear(encoded_size, 8)
+        self.decoder_euler_fc2 = nn.Linear(8, 3)  
+
+    def forward(self, x):
+        # Flatten the input 3x3 matrix to a 9-element vector
+        x = x.view(x.size(0), -1)
+        
+        # Encoder pathway
+        x = F.relu(self.encoder_fc1(x))
+        encoded = F.relu(self.encoder_fc2(x))
+        
+        # Decoder pathway for Trace
+        trace = F.relu(self.decoder_trace_fc1(encoded))
+        trace = self.decoder_trace_fc2(trace)
+        
+        # Decoder pathway for Euler Angles
+        euler_angles = F.relu(self.decoder_euler_fc1(encoded))
+        euler_angles = self.decoder_euler_fc2(euler_angles)
+        
+        #return_dict = {'trace': trace, 'euler_angles': euler_angles, 'latent_space': encoded}
+        return trace, euler_angles, encoded
+
+
+
+
+
+
 class VAE_convT(nn.Module):
     def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False):
         super(VAE_convT, self).__init__()
 
-        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization)
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= 3072)
         self.decoder = Decoder(gf_dim = gf_dim, out_channels = out_channels, apply_initialization=apply_initialization)
-
     def forward(self, x):
         x = x.get('input_images')
         # Run encoder network and get the latent space distribution
@@ -657,11 +896,309 @@ class VAE_convT(nn.Module):
         # Sample the latent space using a normal distribution (samples)
         samples = torch.randn_like(z_mean)
         self.guessed_z = z_mean + z_std * samples
+        
 
         # Decoder
         decoder_output = self.decoder(self.guessed_z)
         dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
         return dict
+    
+class ConvWithAux(nn.Module):
+    """
+    This class is a combination of the encoder, decoder and the auxillary network
+    """
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False, z_dim:int = 3072):
+        super(ConvWithAux, self).__init__()
+
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= z_dim)
+
+        # 9 because rotation matrix is 3x3
+        output_size_aux = 3
+        self.auxillary_network = DenseAuxNet(input_size=9, output_size=output_size_aux)
+
+        # The decoder has to change a bit, because we concatenate the latent space with the output of the auxillary network
+
+        self.decoder = Decoder(gf_dim = gf_dim, aux_output_dim = output_size_aux, out_channels = out_channels, apply_initialization=apply_initialization)
+
+        
+
+    def forward(self, x):
+        rotation_matrix = x.get('rotation_matrix')
+        
+        x = x.get('input_images')
+        # Run encoder network and get the latent space distribution
+        z_mean, z_std, res = self.encoder(x)
+
+        # Sample the latent space using a normal distribution (samples)
+        samples = torch.randn_like(z_mean)
+        self.guessed_z = z_mean + z_std * samples
+        
+
+        # Process rotation matrix through the auxiliary network
+        aux_output = self.auxillary_network(rotation_matrix)
+        #expanded_aux_output = aux_output.reshape(1, 3, 1, 1, 1).expand(-1, 3, 2, 2, 3)
+        # Step 1: Expand the auxiliary output
+        aux_expanded = aux_output.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Now: [batch_size, 3, 1, 1, 1]
+        aux_expanded = aux_expanded.expand(-1, -1, 2, 2, 3)  # Now: [batch_size, 3, 2, 2, 3]
+
+        # Step 2: Concatenate along the channel dimension
+        self.guessed_z = torch.cat((self.guessed_z, aux_expanded), dim=1)  # Now: [batch_size, 256 + 3, 2, 2, 3]
+
+        #self.guessed_z = torch.cat([self.guessed_z, expanded_aux_output], dim=1)
+
+        # Decoder
+        decoder_output = self.decoder(self.guessed_z)
+        dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
+        return dict
+    
+
+class ConvWithDeepAux(nn.Module):
+    """
+    This class is a combination of the encoder, decoder and the auxillary network
+    """
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False, z_dim:int = 3072):
+        super(ConvWithDeepAux, self).__init__()
+
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= z_dim)
+
+        # 9 because rotation matrix is 3x3
+        output_size_aux = 3
+        self.auxillary_network = DenseDeepAuxNet(input_size=9, output_size=output_size_aux)
+
+        # The decoder has to change a bit, because we concatenate the latent space with the output of the auxillary network
+
+        self.decoder = Decoder(gf_dim = gf_dim, aux_output_dim = output_size_aux, out_channels = out_channels, apply_initialization=apply_initialization)
+
+        
+
+    def forward(self, x):
+        rotation_matrix = x.get('rotation_matrix')
+        
+        x = x.get('input_images')
+        # Run encoder network and get the latent space distribution
+        z_mean, z_std, res = self.encoder(x)
+
+        # Sample the latent space using a normal distribution (samples)
+        samples = torch.randn_like(z_mean)
+        self.guessed_z = z_mean + z_std * samples
+        
+
+        # Process rotation matrix through the auxiliary network
+        aux_output = self.auxillary_network(rotation_matrix)
+        #expanded_aux_output = aux_output.reshape(1, 3, 1, 1, 1).expand(-1, 3, 2, 2, 3)
+        # Step 1: Expand the auxiliary output
+        aux_expanded = aux_output.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Now: [batch_size, 3, 1, 1, 1]
+        aux_expanded = aux_expanded.expand(-1, -1, 2, 2, 3)  # Now: [batch_size, 3, 2, 2, 3]
+
+        # Step 2: Concatenate along the channel dimension
+        self.guessed_z = torch.cat((self.guessed_z, aux_expanded), dim=1)  # Now: [batch_size, 256 + 3, 2, 2, 3]
+
+        #self.guessed_z = torch.cat([self.guessed_z, expanded_aux_output], dim=1)
+
+        # Decoder
+        decoder_output = self.decoder(self.guessed_z)
+        dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
+        return dict
+
+
+
+
+class ConvWithEncDecAux(nn.Module):
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False, z_dim:int = 3072):
+        super(ConvWithEncDecAux, self).__init__()
+
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= z_dim)
+
+        # 9 because rotation matrix is 3x3
+        output_size_aux = 6 # Here this is the size of the latent space 
+        
+        self.auxillary_network = EncDecAuxNet(input_size=9, encoded_size=output_size_aux)
+
+        # The decoder has to change a bit, because we concatenate the latent space with the output of the auxillary network
+
+        self.decoder = Decoder(gf_dim = gf_dim, aux_output_dim = output_size_aux, out_channels = out_channels, apply_initialization=apply_initialization)
+    
+    def forward(self, x):
+        rotation_matrix = x.get('rotation_matrix')
+        
+        x = x.get('input_images')
+
+        # Rim encoder network and get the latent space distribution
+        z_mean, z_std, res = self.encoder(x)
+
+        # Sample the latent space using a normal distribution (samples)
+        samples = torch.randn_like(z_mean)
+        self.guessed_z = z_mean + z_std * samples
+
+        # Process rotation matrix through the auxiliary network
+        #dict_aux_output = self.auxillary_network(rotation_matrix)
+        trace, euler_angles, aux_output = self.auxillary_network(rotation_matrix)
+        # Add the auxillary output to the dictionary
+        dict_aux_output = {'trace': trace, 'euler_angles': euler_angles, 'latent_space': aux_output}
+        aux_output = dict_aux_output.get('latent_space')
+        
+        
+        aux_expanded = aux_output.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Now: [batch_size, output_size_aux, 1, 1, 1]
+        aux_expanded = aux_expanded.expand(-1, -1, 2, 2, 3)  # Now: [batch_size, output_size_aux, 2, 2, 3]
+
+        self.guessed_z = torch.cat((self.guessed_z, aux_expanded), dim=1)  # Now: [batch_size, 256 + 6, 2, 2, 3]
+
+        # Decoder
+        decoder_output = self.decoder(self.guessed_z)
+
+        # Add the auxillary output to the dictionary
+        dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
+        dict.update(dict_aux_output)
+        return dict
+    
+
+class ConvWithDeepEncDecAux(nn.Module):
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False, z_dim:int = 3072):
+        super(ConvWithDeepEncDecAux, self).__init__()
+
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= z_dim)
+
+        # 9 because rotation matrix is 3x3
+        output_size_aux = 6 # Here this is the size of the latent space 
+        
+        self.auxillary_network = EncDecDeepAuxNet(input_size=9, encoded_size=output_size_aux)
+
+        # The decoder has to change a bit, because we concatenate the latent space with the output of the auxillary network
+
+        self.decoder = Decoder(gf_dim = gf_dim, aux_output_dim = output_size_aux, out_channels = out_channels, apply_initialization=apply_initialization)
+    
+    def forward(self, x):
+        rotation_matrix = x.get('rotation_matrix')
+        
+        x = x.get('input_images')
+
+        # Rim encoder network and get the latent space distribution
+        z_mean, z_std, res = self.encoder(x)
+
+        # Sample the latent space using a normal distribution (samples)
+        samples = torch.randn_like(z_mean)
+        self.guessed_z = z_mean + z_std * samples
+
+        # Process rotation matrix through the auxiliary network
+        #dict_aux_output = self.auxillary_network(rotation_matrix)
+        trace, euler_angles, aux_output = self.auxillary_network(rotation_matrix)
+        # Add the auxillary output to the dictionary
+        dict_aux_output = {'trace': trace, 'euler_angles': euler_angles, 'latent_space': aux_output}
+        aux_output = dict_aux_output.get('latent_space')
+        
+        
+        aux_expanded = aux_output.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Now: [batch_size, output_size_aux, 1, 1, 1]
+        aux_expanded = aux_expanded.expand(-1, -1, 2, 2, 3)  # Now: [batch_size, output_size_aux, 2, 2, 3]
+
+        self.guessed_z = torch.cat((self.guessed_z, aux_expanded), dim=1)  # Now: [batch_size, 256 + 6, 2, 2, 3]
+
+        # Decoder
+        decoder_output = self.decoder(self.guessed_z)
+
+        # Add the auxillary output to the dictionary
+        dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
+        dict.update(dict_aux_output)
+        return dict
+    
+class ConvWithDeeperEncDecAux(nn.Module):
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False, z_dim:int = 3072):
+        super(ConvWithDeeperEncDecAux, self).__init__()
+
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= z_dim)
+
+        # 9 because rotation matrix is 3x3
+        output_size_aux = 64 # Here this is the size of the latent space 
+        
+        self.auxillary_network = EncDecDeepAuxNet(input_size=9, encoded_size=output_size_aux)
+
+        # The decoder has to change a bit, because we concatenate the latent space with the output of the auxillary network
+
+        self.decoder = Decoder(gf_dim = gf_dim, aux_output_dim = output_size_aux, out_channels = out_channels, apply_initialization=apply_initialization)
+    
+    def forward(self, x):
+        rotation_matrix = x.get('rotation_matrix')
+        
+        x = x.get('input_images')
+
+        # Rim encoder network and get the latent space distribution
+        z_mean, z_std, res = self.encoder(x)
+
+        # Sample the latent space using a normal distribution (samples)
+        samples = torch.randn_like(z_mean)
+        self.guessed_z = z_mean + z_std * samples
+
+        # Process rotation matrix through the auxiliary network
+        #dict_aux_output = self.auxillary_network(rotation_matrix)
+        trace, euler_angles, aux_output = self.auxillary_network(rotation_matrix)
+        # Add the auxillary output to the dictionary
+        dict_aux_output = {'trace': trace, 'euler_angles': euler_angles, 'latent_space': aux_output}
+        aux_output = dict_aux_output.get('latent_space')
+        
+        
+        aux_expanded = aux_output.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Now: [batch_size, output_size_aux, 1, 1, 1]
+        aux_expanded = aux_expanded.expand(-1, -1, 2, 2, 3)  # Now: [batch_size, output_size_aux, 2, 2, 3]
+
+        self.guessed_z = torch.cat((self.guessed_z, aux_expanded), dim=1)  # Now: [batch_size, 256 + 6, 2, 2, 3]
+
+        # Decoder
+        decoder_output = self.decoder(self.guessed_z)
+
+        # Add the auxillary output to the dictionary
+        dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
+        dict.update(dict_aux_output)
+        return dict
+
+    
+class ConvWithDeeperBNEncDecAux(nn.Module):
+    def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, apply_initialization:bool =False, z_dim:int = 3072):
+        super(ConvWithDeeperBNEncDecAux, self).__init__()
+
+        self.encoder = Encoder(in_channels = in_channels, gf_dim = gf_dim, apply_initialization=apply_initialization, z_dim= z_dim)
+
+        # 9 because rotation matrix is 3x3
+        output_size_aux = 64 # Here this is the size of the latent space 
+        
+        self.auxillary_network = EncDecDeepBNAuxNet(input_size=9, encoded_size=output_size_aux)
+
+        # The decoder has to change a bit, because we concatenate the latent space with the output of the auxillary network
+
+        self.decoder = Decoder(gf_dim = gf_dim, aux_output_dim = output_size_aux, out_channels = out_channels, apply_initialization=apply_initialization)
+    
+    def forward(self, x):
+        rotation_matrix = x.get('rotation_matrix')
+        
+        x = x.get('input_images')
+
+        # Rim encoder network and get the latent space distribution
+        z_mean, z_std, res = self.encoder(x)
+
+        # Sample the latent space using a normal distribution (samples)
+        samples = torch.randn_like(z_mean)
+        self.guessed_z = z_mean + z_std * samples
+
+        # Process rotation matrix through the auxiliary network
+        #dict_aux_output = self.auxillary_network(rotation_matrix)
+        trace, euler_angles, aux_output = self.auxillary_network(rotation_matrix)
+        # Add the auxillary output to the dictionary
+        dict_aux_output = {'trace': trace, 'euler_angles': euler_angles, 'latent_space': aux_output}
+        aux_output = dict_aux_output.get('latent_space')
+        
+        
+        aux_expanded = aux_output.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # Now: [batch_size, output_size_aux, 1, 1, 1]
+        aux_expanded = aux_expanded.expand(-1, -1, 2, 2, 3)  # Now: [batch_size, output_size_aux, 2, 2, 3]
+
+        self.guessed_z = torch.cat((self.guessed_z, aux_expanded), dim=1)  # Now: [batch_size, 256 + 6, 2, 2, 3]
+
+        # Decoder
+        decoder_output = self.decoder(self.guessed_z)
+
+        # Add the auxillary output to the dictionary
+        dict = {'decoder_output': decoder_output, 'mu': z_mean, 'z_std': z_std, 'res': res}
+        dict.update(dict_aux_output)
+        return dict
+
+    
+
 
 class VAE(nn.Module):
     def __init__(self, in_channels:int =4, gf_dim:int =8, out_channels:int =4, ):
