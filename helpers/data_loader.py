@@ -350,11 +350,7 @@ def load_data(config, sys_config, idx_start_tr = 0, idx_end_tr = 1, idx_start_vl
                   'rotation_tr': rotation_tr, 'rotation_vl': rotation_vl, 'rotation_test': rotation_ts}
     
     return return_dic
-    #if with_test_labels:
-    #    
-    #    return images_tr, images_vl, images_ts, labels_ts
-    #else:
-    #    return images_tr, images_vl, images_ts
+   
 
 def load_syntetic_data(preprocess_method,
                         idx_start,
