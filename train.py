@@ -22,19 +22,11 @@ from helpers.run import train, load_model, evaluate
 from helpers.data_loader import load_data, load_syntetic_data
 
 
-SEED = 5
-torch.manual_seed(SEED)
-np.random.seed(SEED)
-torch.cuda.manual_seed_all(SEED)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
-
 # =================================================================================
 # ============== IMPORT MODELS ==================================================
 # =================================================================================
 
-from models.vae import VAE, VAE_linear, VAE_convT, ConvWithAux, ConvWithEncDecAux,ConvWithDeepAux, ConvWithDeepEncDecAux, ConvWithDeeperEncDecAux, ConvWithDeeperBNEncDecAux
+from models.model_zoo import SimpleConvNet, SimpleConvNetInterpolate, SimpleConvNet_linear, VAE_convT, ConvWithAux, ConvWithEncDecAux,ConvWithDeepAux, ConvWithDeepEncDecAux, ConvWithDeeperEncDecAux, ConvWithDeeperBNEncDecAux
     
 from models.condconv import CondVAE, CondConv
 
@@ -45,8 +37,8 @@ from models.condconv import CondVAE, CondConv
 if __name__ ==  "__main__":
 
     # Parse the arguments
-    parser = argparse.ArgumentParser(description='Train a VAE model.')
-    parser.add_argument('--model', type=str, default="vae_convT", help='Model to train.')
+    parser = argparse.ArgumentParser(description='Train a CNN model.')
+    parser.add_argument('--model', type=str, default="simple_conv", help='Model to train.')
     parser.add_argument('--model_name', type=str, default=None, help='Name of the model.')
     parser.add_argument('--config_path', type=str, required= True, help='Path to the config file.')
     parser.add_argument('--checkpoint', type=str, default="logs", help='Path to the checkpoint file to restore.')
@@ -72,6 +64,12 @@ if __name__ ==  "__main__":
         if value is not None:
             config[arg] = value
 
+    SEED = config['seed']
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     # Get the slurm job id
     config['AAslurm_job_id'] = os.environ.get("SLURM_JOB_ID")
   
@@ -86,12 +84,17 @@ if __name__ ==  "__main__":
     logging.info(f"Using device: {device}")
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M")
 
+    # ================================================
+    costume_name = False
     if str(config['model_name']) != str(0) and str(config['model_name']) != str(None):
         # Costume name given
+        costume_name = True
         pass
-    elif config['model'] == 'vae':
+    elif config['model'] == 'simple_conv':
+            config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
+    elif config['model'] == 'conv_interpolate':
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
-    elif config['model'] == 'vae_linear':
+    elif config['model'] == 'conv_linear':
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-zdim{config['z_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
     elif config['model'] == 'vae_convT':
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{str(config['do_data_augmentation']) if config['self_supervised'] else str(config['do_data_augmentation']) + '-f' +str(config['gen_loss_factor'])}"
@@ -107,14 +110,16 @@ if __name__ ==  "__main__":
         config['model_name'] =  f"{timestamp}_{config['model']}_{config['preprocess_method'] + '_SSL' if config['self_supervised'] else config['preprocess_method']}_lr{'{:.3e}'.format(config['lr'])}{'_scheduler' + '-e' + str(config['epochs']) if config['use_scheduler'] else '-e' + str(config['epochs'])}-bs{config['batch_size']}-gf_dim{config['gf_dim']}-da{config['do_data_augmentation']}-f{str(config['gen_loss_factor'])}"
     
     # Add extra note to name
-    if len(config['note']) > 0:
-        config['model_name'] = config['model_name'] + f"{'_' + config['note']}"
+    if not costume_name:
+        config['model_name'] = config['model_name'] + f"{'__SEED_'+ str(SEED)}"
+        if len(config['note']) > 0:
+            config['model_name'] = config['model_name'] + f"{config['note']}"
 
-    if len(config['synthetic_data_note']) > 0:
-        config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}" + f"{'_' + config['synthetic_data_note']}"    
-    else:
-        config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}"
-    wandb_mode = "online" # online/ disabled
+        if len(config['synthetic_data_note']) > 0:
+            config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}" + f"{'_' + config['synthetic_data_note']}"    
+        else:
+            config['model_name'] = config['model_name'] + f"{'_' + config['validation_metric_format']}"
+    
     tag = ''
     if config['self_supervised']:
         tag = 'self_supervised'
@@ -127,23 +132,26 @@ if __name__ ==  "__main__":
     else:
         tags = [config['model'], f"{SEED}","fixed_anomaly_seed"]
         tags.append(tag)
-        if config['use_synthetic_validation']:
-            config['model_name'] = config['model_name'] + '_synthetic_validation'
+        
     
     # ================================================
-            
+    if config['use_wandb']:
 
-    with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
-        config = wandb.config
-        print('after_init', config['model_name'])
+        with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
+            config = wandb.config
+            print('after_init', config['model_name'])
 
-        # Check if it is a sweep
-        sweep_id = os.environ.get("WANDB_SWEEP_ID")
-        if sweep_id:
-            # We add a level for the sweep name 
-            config['exp_path'] = os.path.join(config_sys.log_root, config['model'],config['preprocess_method'], sweep_id,config['model_name'])
-        else:
-            config['exp_path'] = os.path.join(config_sys.log_root, config['model'],config['preprocess_method'], config['model_name'])
+            # Check if it is a sweep
+            sweep_id = os.environ.get("WANDB_SWEEP_ID")
+            if sweep_id:
+                # We add a level for the sweep name 
+                config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], sweep_id,config['model_name'])
+            else:
+                config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], config['model_name'])
+            log_dir = config['exp_path']
+
+    else:
+        config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], config['model_name'])
         log_dir = config['exp_path']
         # ================================================
         # ======= LOGGING CONFIGURATION ==================
@@ -175,66 +183,39 @@ if __name__ ==  "__main__":
         # ================================================
         # Initialize the model, training parameters, model name and logging
         # ================================================
-        if config['model'] == 'vae':
-            if config['self_supervised']:
-                # In this case we have a binary classification problem
-                model = VAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = VAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
-        elif config['model'] == 'vae_convT':
-            if config['self_supervised']:
-                # In this case we have a binary classification problem
-                model = VAE_convT(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = VAE_convT(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+        # Check if self-supervised or not
+        if config['self_supervised']:
+            config['out_channels'] = 1
+        else:
+            config['out_channels'] = 4
+        config['in_channels'] = 4   
+
+        if config['model'] == 'simple_conv':
+            model = SimpleConvNet(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
+        elif config['model'] == 'conv_interpolate':
+            model = SimpleConvNetInterpolate(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
+        elif config['model'] == 'vae_convT': # Same as SimpleConvNet but name was confusing
+            model = VAE_convT(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         elif config['model'] == 'cond_vae':
-            if config['self_supervised']:
-                # In this case we have a binary classification problem
-                model = CondVAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=1, num_experts=config['n_experts']).to(device)
-            else:
-                model = CondVAE(in_channels=4, gf_dim=config['gf_dim'], out_channels=4, num_experts=config['n_experts']).to(device)
+            # Then we need the neighbouts for the routing function 
+            config['get_neighbours'] = True
+            model = CondVAE(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels'], num_experts=config['n_experts']).to(device)
         elif config['model'] == 'cond_conv':
             # Then we need the neighbouts for the routing function 
             config['get_neighbours'] = True
-            if config['self_supervised']:
-                # In this case we have a binary classification problem
-                model = CondConv(in_channels=4, gf_dim=config['gf_dim'], out_channels=1, num_experts=config['n_experts']).to(device)
-            else:
-                model = CondConv(in_channels=4, gf_dim=config['gf_dim'], out_channels=4, num_experts=config['n_experts']).to(device)
+            model = CondConv(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels'], num_experts=config['n_experts']).to(device)
         elif config['model'] == 'conv_with_aux':
-            if config['self_supervised']:
-                model = ConvWithAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = ConvWithAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
-
+            model = ConvWithAux(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         elif config['model'] == 'conv_enc_dec_aux':
-            if config['self_supervised']:
-                model = ConvWithEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = ConvWithEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+            model = ConvWithEncDecAux(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         elif config['model'] == 'deep_conv_with_aux':
-            if config['self_supervised']:
-                model = ConvWithDeepAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = ConvWithDeepAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
-
+            model = ConvWithDeepAux(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         elif config['model'] == 'deep_conv_enc_dec_aux':
-            if config['self_supervised']:
-                model = ConvWithDeepEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = ConvWithDeepEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
-
+            model = ConvWithDeepEncDecAux(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         elif config['model'] == 'deeper_conv_enc_dec_aux':
-            if config['self_supervised']:
-                model = ConvWithDeeperEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = ConvWithDeeperEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
-
+            model = ConvWithDeeperEncDecAux(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         elif config['model'] == 'deeper_bn_conv_enc_dec_aux':
-            if config['self_supervised']:
-                model = ConvWithDeeperBNEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=1).to(device)
-            else:
-                model = ConvWithDeeperBNEncDecAux(in_channels=4, gf_dim=config['gf_dim'], out_channels=4).to(device)
+            model = ConvWithDeeperBNEncDecAux(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
         else:
             raise ValueError(f"Unknown model: {config['model']}")
         
@@ -243,8 +224,10 @@ if __name__ ==  "__main__":
             continue_train_path = os.path.join(project_code_root, config["model_directory"])
             model = load_model(model, continue_train_path, config, device=device)
             already_completed_epochs = config['latest_model_epoch']
+            
         else:
             already_completed_epochs = 0
+            
         # ================================================
         # Print summary of the model
         # ================================================
