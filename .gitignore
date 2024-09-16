@@ -163,6 +163,7 @@ cython_debug/
 # Personal
 data/*
 logs/*
+Saved_models/*
 wandb/*
 .vscode/*
 sbatch_log/*
@@ -177,6 +178,8 @@ helpers/preprocess_logs/*
 !requirement.txt
 # vtk files
 *.vtk
+# csv files (private data)
+*.csv
 
 verify_slicing_rotation.ipynb
 
