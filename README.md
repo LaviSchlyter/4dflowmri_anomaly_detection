@@ -5,71 +5,75 @@
 
 This project presents a deep learning-based approach for the detection of anomalies in 4D flow MRI data. By employing self-supervised learning and reconstruction-based techniques, our model efficiently identifies abnormal blood flow patterns. The repository contains the code, data processing scripts, and evaluation tools developed during the study.
 
-
-
-
-
-
-
 ## Authors
 
 - [@LaviniaSchlyter](https://github.com/LaviSchlyter)
 
 
-## Run Locally
+## How to run - simple version
 
-Clone the project
+#### Config run
 
-```bash
-  git clone https://github.com/LaviSchlyter/4dflowmri_anomaly_detection
+Got to `config/config_cnn.yaml` to set configurations. 
+```yaml
+seed: 5 #5,10,15,20,25
+suffix_data: '_without_rotation_with_cs_skip_updated_ao_S10_balanced' # used for paper
+# If SSL
+self_supervised: True
+use_synthetic_validation: True
+# If RB
+self_supervised: False
+use_synthetic_validation: False
+
+# Depending on synthetic anomalies introduced in training we need to remove indices from validation. For the paper, we use in training Poisson blending with gradient mixing in training so we remove in validation. We have 10 subjects in validation.
+# Go in utils.py `apply_blending` function, if desire to change 
+indices_to_remove: [3200, 3840]
+
 ```
 
-Go to the project directory
+#### Run bash script
+```python
+  # Run the bash file which launches the `run.py` onto the cluster
+  cd run_scripts
+  sbatch run_SimpleConvNet.sh
 
-```bash
-  cd 4dflowmri_anomaly_detection
+  # Logs appear in `sbatch_logs/sbatch_train_logs`
+```
+#### Running inference
+Models are saved in `Saved_models` directory
+
+- Go to `inference_experiments_list.py`: Create a dictionary with the names of the experiments under the name ```short_experiments_with_cs``` or without the `short` (this will give the correct indices on the dataset used). `with_cs` extension because we also include compressed sensing data
+
+- Go to `inference_test.py`. Select the desired parameters. `backtransform_anomaly_scores_bool`, `visualize_inference_plots` etc
+
+```python
+  # Run
+  sbatch inference_test
+
+  # Logs appear in `sbatch_logs/sbatch_inference_logs`
 ```
 
-Install dependencies
+#### View results
 
-```bash
-  conda create --name <env> --file requirements.txt
-```
+Results are stored in `Results/Evaluation/{model}/{preprocess_method}/{experiment}` 
 
-Preprocess the data by running\
-Here it is assumed that you have the segmentations already, else you need to run the code from this [repo](https://github.com/LaviSchlyter/4D-Flow-CNN-Segmentation)
-```bash
-  cd helpers
-```
+**for eg.** `Results/Evaluation/simple_conv/masked_slice/20240530-1325_simple_conv_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_balanced_decreased_interpolation_factor_cube_3`
 
-```bash
-  python data_bern_numpy_to_preprocessed_hdf5.py
-```
+_They contain:_
 
-Train the network
+1. `log_test.txt`: log of inference run
+2. `test` folder with inputs, outputs, backtransformed outputs and all visualizations
+3. `subject_df_with_anomaly_scores_{seed}.csv`: file containing ID, Age, sex, anomaly scores, p-values of permutation tests, region based level prediction etc
+4. `subject_df_with_anomaly_scores_simple.csv`: Simplified version
 
-For the Self-Supervised Learning (SSL) and the Reconstruction-Based (RB) method both use the `config_vae.yaml` to set the parameters in the `config` folder
 
-```bash
-  # Run the bash file which launches the `run.py` onto the cluster if available
-  sbatch vae_convT_run.sh.sh
-```
-For the conditionally parametrized version use the `config_cond_vae.yaml` to set the parameters in the `config` folder
+#### View aggregated results over seeds
+Notebook to view results simple results across seeds
+`Results/Aggregated_results_across_seeds/Basic_visualization_across_seeds.ipynb`
 
-```bash
-  # Run the bash file which launches the `run.py` onto the cluster if available
-  sbatch cond_vae_run.sh.sh.sh
-```
 
-Running inference\
-To run the best saved model on the test data
+## Anomaly detection pipeline
+Here we present step by step what should be run from final segmentation to cross sectional slices, model results, back-transformation and Paraview visualization.
 
-```bash
-  python visualize_best_model_outputs.py
-```
 
-Backtransformation and better visualization
-In the `helpers` folder once you have the inference results in the Results directoy run `python backtransform.py`
-
-This will backtransform the anomaly slices into their original reference frame as well as convert them to vtk for easy visualization in 4D using ParaView
 
