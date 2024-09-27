@@ -3,13 +3,13 @@ Quadrant Masks Generation for Anomaly Detection
 
 This script generates and saves quadrant masks for gradient images used in anomaly detection.
 The masks are created in two types:
-1. Masks with quadrants: Posterior, Right, Anterior, Left.
-2. Masks with quadrants: Posterior-right, Anterior-right, Posterior-left, Anterior-left.
+1. Masks with quadrants: Posterior, Right, Anterior, Left. (Quadrants are based on 45-degree angles from main axes)
+2. Masks with quadrants: Posterior-right, Anterior-right, Posterior-left, Anterior-left. (Quadrants are based on main axes)
 
 All masks have sizes [# of slices, 4 (quadrants), 32, 32].
 
-Note: We assume that the center of the aorta is in the center of the image, as that is
-where the centerline is drawn.
+Note: We assume that the center of the aorta is in the center of the image, (a.k.a
+where the centerline is drawn).
 
 Helper functions are found in utils.py
 

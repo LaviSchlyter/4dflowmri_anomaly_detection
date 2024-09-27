@@ -1,4 +1,35 @@
-# We want to create a dataset with synthetic anomalies
+"""
+Synthetic Anomaly Generation Script
+
+This script generates synthetic anomalies in medical imaging data for anomaly detection 
+experiments. It applies various types of deformations to the original images and saves the 
+resulting synthetic data to an HDF5 file.
+
+The main functions and their purposes are:
+
+- generate_noise: Generates random noise to be added to images.
+- calc_distance: Calculates the Euclidean distance between two points.
+- create_mask: Creates a mask for a given image based on a center and width.
+- create_deformation_chan: Applies a deformation to an image based on a given center and width.
+- generate_deformation_chan: Generates deformed versions of input images and corresponding masks.
+- create_hollow_noise: Creates hollow noise patterns in the images.
+- create_cube_mask: Creates a cube mask for blending operations.
+- get_image_to_blend: Selects a random image for blending.
+- prepare_and_write_synthetic_data: Prepares and writes synthetic data with various deformations to an HDF5 file.
+- load_create_syntetic_data: Loads or creates synthetic data based on specified configurations.
+
+This script supports the following types of deformations:
+- None: No deformation, original image.
+- noisy: Adds random noise to the image.
+- deformation: Applies a geometric deformation to the image.
+- hollow circle: Adds a hollow circle of noise to the image.
+- patch_interpolation: Blends patches from different images using interpolation.
+- poisson_with_mixing: Applies Poisson blending with mixed gradients.
+- poisson_without_mixing: Applies Poisson blending without mixed gradients.
+
+The script is intended for use in an anomaly detection pipeline, where synthetic anomalies 
+are introduced to create a more robust and challenging dataset for training and evaluation.
+"""
 # %%
 # Import packages
 import os
@@ -242,8 +273,6 @@ def create_hollow_noise(im, mean, std, ratio = 0.8):
 
         # We need to extend the noise to the time dimension and channel dimensions
         # Note that we only apply the hollow noise on timsteps 0-12
-        # That's when the blood pumps and we can see potential anomalies 
-
         # Reshape the image to (x,y, 1, 1)
         final_noise_resaped = final_noise.reshape(final_noise.shape[0], final_noise.shape[1], 1, 1)
 
@@ -560,40 +589,37 @@ def load_create_syntetic_data(data,
 if __name__ == '__main__':
     #%%
     # Type of deformation
-    # 'None', 'noisy', 'deformation', 'hollow circle', 'patch', 'all'
     deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
-    #deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+    
     deformation_type = 'all'
 
     # Set config
     config = dict()
-    # 'None', 'mask', 'slice', 'masked_slice', 'sliced_full_aorta', 'masked_sliced_full_aorta', 'mock_square'
-    config['preprocess_method'] = 'masked_slice' 
+    # 'mask', 'slice', 'masked_slice', 'sliced_full_aorta', 'masked_sliced_full_aorta'
+    # Change this
+    config['preprocess_method'] = 'masked_slice' # Final code uses this
 
     # Load the validation data on which we apply the synthetic anomalies
-    # '_without_rotation_without_cs_skip_updated_ao_S10', _with_rotation_only_cs_skip_updated_ao_S10
-    suffix = '_without_rotation_only_cs_skip_updated_ao_S10_centered_norm'  #_without_rotation_with_cs_skip_updated_ao_S10
+    # Change this
+    suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced'
+    
     only_compressed_sensing = False
     include_compressed_sensing = True
-
     if suffix.__contains__('only_cs'):
         only_compressed_sensing = True
+        idx_start_vl = 10
+        idx_end_vl = 14
         
     elif suffix.__contains__('without_cs'):
         include_compressed_sensing = False
-
-    
-
-    
-    #idx_start_vl = 35
-    #idx_end_vl = 42
-    idx_start_vl = 10
-    idx_end_vl = 14
-    #idx_start_vl = 41
-    #idx_end_vl = 51
+        idx_start_vl = 32
+        idx_end_vl = 39
+    else:
+        idx_start_vl = 41
+        idx_end_vl = 51
     data_dict = load_data(config=config, sys_config=sys_config, idx_start_tr = 0, idx_end_tr = 1, idx_start_vl = idx_start_vl, idx_end_vl = idx_end_vl, idx_start_ts = 0, idx_end_ts = 1, suffix = suffix, include_compressed_sensing = include_compressed_sensing, only_compressed_sensing = only_compressed_sensing)
     images_vl = data_dict['images_vl']
-    #images_vl = h5py.File('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/val_with_rotation_without_cs_masked_sliced_images_from_35_to_42.hdf5','r')['sliced_images_val'][:]
+    
 
     # Create synthetic anomalies
     data = load_create_syntetic_data(data = images_vl,
@@ -604,7 +630,6 @@ if __name__ == '__main__':
                         force_overwrite=True,
                         note = f'{suffix}_decreased_interpolation_factor_cube_3')
     
-    deformation_list = ['None','deformation', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
     
   
     

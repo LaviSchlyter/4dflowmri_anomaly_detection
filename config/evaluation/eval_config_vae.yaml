@@ -8,14 +8,16 @@ project_data_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital
 # ==================================================================
 # log root
 # ==================================================================
-log_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs/'
+
+log_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/Saved_models/'
+
 
 
 # ============================= MODEL ====================================
 
 # Which model to load
 model_name: "20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100"
-model_directory: "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs/vae/masked_slice/20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100"
+model_directory: "/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/Saved_models/vae/masked_slice/20230531-2036_masked_slice_lr5.000e-05-e2000-bs8-zdim2888-daTrue-f100"
 latest_model_epoch: 760
 model: "vae"
 preprocess_method: "masked_slice"

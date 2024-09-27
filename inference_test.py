@@ -63,11 +63,13 @@ backtransform_list = [
     'MACDAVD_135', 'MACDAVD_133_', 'MACDAVD_133', 'MACDAVD_143_', 'MACDAVD_143', 
     'MACDAVD_206_', 'MACDAVD_206'
 ]
+visualize_inference_plots = False
+# END
 
 # Subjects that don't have a match between Inselspital and the original dataset 
 mismatch_subjects = ['MACDAVD_131', 'MACDAVD_159_', 'MACDAVD_202_']
 name_pre_extension = ['']
-visualize_inference_plots = False
+
 
 # Define time slice indices based on the chosen dictionary
 if chosen_dictionary in [experiments_only_cs, short_experiments_only_cs, experiments_only_cs_reconstruction_based]:

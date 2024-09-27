@@ -22,8 +22,9 @@ def prepare_and_write_data_bern(basepath,
                                         suffix = ''):
         
     # ==========================================
-    # Study the the variation in the sizes along various dimensions (using the function 'find_shapes'), 
-    # Using this knowledge, let us set common shapes for all subjects.
+    # Study the the variation in the sizes along various dimensions.
+    # Using this knowledge, let us set common shapes for all subjects. 
+    # TODO: Needs update with the new data... 
     # ==========================================
     # This shape must be the same in the file where all the training parameters are set!
     # Update: We keep all the Bern data and leave the batch dimension open to their original size

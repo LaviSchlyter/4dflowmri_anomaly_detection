@@ -15,13 +15,19 @@ def iterate_minibatches(data,
                     train_data = True,
                     ):
     '''
-    Author: Neerav Kharani, extended by Pol Peiffer
-    # Update TODO
+    Author: Neerav Kharani, extended by Pol Peiffer and further by Lavinia Schlyter
     Function to create mini batches from the dataset of a certain batch size
-    :param data: numpy dataset
-    :param labels: numpy dataset (same as images/volumes)
-    :param config: configuration files
-    :return: mini batches
+    Parameters:
+    data: dictionary containing the images and masks
+    config: configuration dictionary
+    data_augmentation: boolean to indicate if data augmentation should be applied
+    with_labels: boolean to indicate if the data contains labels
+    remove_indices: boolean to indicate if we want to remove some indices from the data
+    indices_to_remove: list of indices to remove from the data
+    data_dict: dictionary containing the rotation matrices
+    train_data: boolean to indicate if the data is training data
+    Returns:
+    return_dict: dictionary containing the images, rotation matrix and labels
     '''
     
     # ===========================
@@ -33,8 +39,7 @@ def iterate_minibatches(data,
         if train_data:
             data_rotation_matrix = data_dict['rotation_tr']
         else:
-            # If validation with labels we are using self-supervised methods
-            #  we need to extend the rotaiton matrix for the shown anomalies
+            #  We need to extend the rotaiton matrix for the shown anomalies
             # repeat the rotation matrix 7 times (because 7 deformation types)
             data_rotation_matrix = np.repeat(data_dict['rotation_tr'], 7, axis=0)
            
@@ -50,7 +55,7 @@ def iterate_minibatches(data,
     Y = None
     n_images = images.shape[0]
     if with_labels and remove_indices and len(indices_to_remove) == 2:
-        # In the case we use self-supervised learning, we remove some of the images
+        # We remove the indices from the validation set
         # Because they contain the same form of anomalies as the training 
         # We remove the set indices within the list given by user
         random_indices = set(np.arange(n_images))
@@ -58,8 +63,6 @@ def iterate_minibatches(data,
         diff = random_indices - indices_to_remove
         random_indices = np.array(list(diff))
         n_images = n_images - len(indices_to_remove)
-
-        #n_images = n_images - 7*64*3
         
     else:
         random_indices = np.arange(n_images)
@@ -126,7 +129,7 @@ def iterate_minibatches(data,
                                      scale_min=0.9,
                                      scale_max=1.1)
             if with_labels:
-                # TODO: FIX: actually not because you don't do data augmentation on the validation (think again maybe you will on teh training )
+                # TODO: FIX: actually not because you don't do data augmentation on the validation if synthetic anomalies present
                 Y = do_data_augmentation(images=Y,
                                         data_aug_ratio=0.5,
                                         trans_min=-10,
