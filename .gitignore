@@ -180,6 +180,10 @@ helpers/preprocess_logs/*
 *.vtk
 # csv files (private data)
 *.csv
+# Output files
+*.out
+# Wandb files
+run_scripts/wandb/*
 
 verify_slicing_rotation.ipynb
 
