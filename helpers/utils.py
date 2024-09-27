@@ -1,11 +1,10 @@
 import os 
-import timeit
 import SimpleITK as sitk
-#from tvtk.api import tvtk, write_data
+from scipy import interpolate
+from tvtk.api import tvtk, write_data
 import numpy as np
+from skimage.morphology import skeletonize_3d, dilation, binary_erosion
 from scipy.ndimage import gaussian_filter
-
-from scipy.special import eval_genlaguerre as L 
 import torch
 import sys
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/')
@@ -15,38 +14,361 @@ from helpers.loss_functions import l2loss, kl_loss_1d
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/git_repos/many-tasks-make-light-work')
 from multitask_method.tasks.patch_blending_task import \
     TestPoissonImageEditingMixedGradBlender, TestPoissonImageEditingSourceGradBlender, TestPatchInterpolationBlender
-
-
 from multitask_method.tasks.cutout_task import Cutout
 from multitask_method.tasks.patch_blending_task import TestCutPastePatchBlender
 from multitask_method.tasks.labelling import FlippedGaussianLabeller
-
-
-
 
 labeller = FlippedGaussianLabeller(0.2)
 
 
 # ==================================================================
-# Verify leakage
+# Key basic functions
 # ==================================================================
+
 def verify_leakage():
     basepath =  sys_config.project_data_root
-    train_val = basepath + '/final_segmentations/train_val'
-    test = basepath + '/final_segmentations/test'
-    train_val_files = set(os.listdir(train_val))
-    test_files = set(os.listdir(test))
-    overlap = train_val_files.intersection(test_files)
-    if overlap:
-        raise ValueError('There is leakage between train_val and test')
+    train_val_balanced = basepath + '/final_segmentations/train_val_balanced'
+    test_balanced = basepath + '/final_segmentations/test_balanced'
+
+    train_val_balanced_files = set(os.listdir(train_val_balanced))
+    test_balanced_files = set(os.listdir(test_balanced))
+
+    overlap_balanced = train_val_balanced_files.intersection(test_balanced_files)
+
+    if overlap_balanced:
+        raise ValueError('There is leakage between train_val_balanced and test_balanced')
+    print('No leakage between train_val and test')
+
+def normalize_image(image, with_percentile = None, with_set_range = None):
+
+    # initialize with zeros
+    normalized_image = np.zeros((image.shape))
+
+    # normalize magnitude channel
+    normalized_image[...,0] = image[...,0] / np.amax(image[...,0])
+
+    # normalize velocities
+
+    # extract the velocities in the 3 directions
+    velocity_image = np.array(image[...,1:4])
+
+    # denoise the velocity vectors on the spatial and time dimensions but not across channels
+    velocity_image_denoised = gaussian_filter(velocity_image, sigma=(0.5,0.5,0.5,0.5,0))
+
+    if with_percentile is not None and len(with_percentile) == 2:
+        
+        vpercentile_min = np.percentile(velocity_image_denoised, with_percentile[0])
+        vpercentile_max = np.percentile(velocity_image_denoised, with_percentile[1])
+
+        # Normalize the velocity vectors
+        normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
+        normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
+        normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
+
+        # Clip the values to be in the range [-1,1]
+        normalized_image = np.clip(normalized_image, -1, 1)
+    
+    elif with_set_range is not None and len(with_set_range) == 2:
+
+            # Calculate the scaling factor
+            scaling_factor = 2 / (with_set_range[1] - with_set_range[0])
+
+            # Normalize the velocity vectors
+            normalized_image[..., 1] = (velocity_image_denoised[..., 0] - with_set_range[0]) * scaling_factor - 1
+            normalized_image[..., 2] = (velocity_image_denoised[..., 1] - with_set_range[0]) * scaling_factor - 1
+            normalized_image[..., 3] = (velocity_image_denoised[..., 2] - with_set_range[0]) * scaling_factor - 1
+
+    else:    
+
+        normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
+        normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
+        normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
+
+    return normalized_image
+  
+def make_dir_safely(dirname):
+    # directory = os.path.dirname(dirname)
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
+
+def crop_or_pad_normal_slices(data, new_shape):
+    
+    processed_data = np.zeros(new_shape)
+    # axis 0 is the x-axis and we crop from top since aorta is at the bottom
+    # axis 1 is the y-axis and we crop equally from both sides
+    # axis 2 is the z-axis and we crop from the right (end of the image) since aorta is at the left
+    delta_axis0 = data.shape[0] - new_shape[0]
+    
+    if len(new_shape) == 5: # Image
+        # The x is always cropped, y always padded, z_cropped
+        try:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
+        except:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],:new_shape[3],...]
+
+    if len(new_shape) == 4: # Label
+        # The x is always cropped, y always padded, z_cropped
+        try:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
+        except:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],:new_shape[3],...]
+    return processed_data
+
+
+def crop_or_pad_Bern_slices(data, new_shape):
+    processed_data = np.zeros(new_shape)
+    # axis 0 is the x-axis and we crop from top since aorta is at the bottom
+    # axis 1 is the y-axis and we pad
+    # axis 2 is the z-axis and we crop from the right (end of the image) since aorta is at the left
+    delta_axis0 = data.shape[0] - new_shape[0]
+    if len(new_shape) == 5: # Image
+        # The x is always cropped, y always padded, z_cropped
+        try:
+            # Pad time
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
+        except:
+            # Crop time
+            processed_data[:, :data.shape[1],:,:,... ] = data[delta_axis0:,:, :new_shape[2],:new_shape[3],...]
+
+    if len(new_shape) == 4: # Label
+        # The x is always cropped, y always padded, z_cropped
+        try:
+            
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
+        except:
+            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],:new_shape[3],...]
+    return processed_data
+
+
+# ==================================================================
+# Helper functions for centerline slicing and extraction (PREPROCESSING)
+# ==================================================================
+
+
+def extract_slice_from_sitk_image(sitk_image, point, Z, X, new_size, fill_value=0):
+    """
+    Extract oblique slice from SimpleITK image. Efficient, because it rotates the grid and
+    only samples the desired slice.
+
+    """
+    num_dim = sitk_image.GetDimension()
+
+    orig_pixelid = sitk_image.GetPixelIDValue()
+    orig_direction = sitk_image.GetDirection()
+    orig_spacing = np.array(sitk_image.GetSpacing())
+
+    new_size = [int(el) for el in new_size]  # SimpleITK expects lists, not ndarrays
+    point = [float(el) for el in point]
+
+    rotation_center = sitk_image.TransformContinuousIndexToPhysicalPoint(point)
+
+    X = X / np.linalg.norm(X)
+    Z = Z / np.linalg.norm(Z)
+    assert np.dot(X, Z) < 1e-12, 'the two input vectors are not perpendicular!'
+    Y = np.cross(Z, X)
+
+    orig_frame = np.array(orig_direction).reshape(num_dim, num_dim)
+    new_frame = np.array([X, Y, Z])
+
+    # important: when resampling images, the transform is used to map points from the output image space into the input image space
+    rot_matrix = np.dot(orig_frame, np.linalg.pinv(new_frame))
+    transform = sitk.AffineTransform(rot_matrix.flatten(), np.zeros(num_dim), rotation_center)
+
+    phys_size = new_size * orig_spacing
+    new_origin = rotation_center - phys_size / 2
+
+    resample_filter = sitk.ResampleImageFilter()
+    resample_filter.SetSize(new_size)
+    resample_filter.SetOutputSpacing(orig_spacing)
+    resample_filter.SetOutputDirection(orig_direction)
+    resample_filter.SetOutputOrigin(new_origin)
+    resample_filter.SetInterpolator(sitk.sitkLinear)
+    resample_filter.SetTransform(transform)
+    resample_filter.SetDefaultPixelValue(fill_value)
+
+    resampled_sitk_image = resample_filter.Execute(sitk_image)
+    output_dict = {}
+    output_dict['resampled_sitk_image'] = resampled_sitk_image
+    output_dict['transform'] = transform
+    output_dict['origin'] = resampled_sitk_image.GetOrigin()
+    return output_dict
+
+def rotate_vectors(vectors, rotation_matrix):
+    """
+    Rotates a 2D array of 3D vectors using a 3D rotation matrix.
+    """
+    # Reshape the vectors array for matrix multiplication
+    vectors_flat = vectors.reshape(-1, 3)
+    vectors_flat[:, [0, 2]] = vectors_flat[:, [2, 0]]
+    rotated_vectors_flat = np.dot(rotation_matrix, vectors_flat.T).T
+    
+    # Reshape back to original shape
+    rotated_vectors = rotated_vectors_flat.reshape(vectors.shape)
+    
+    
+    return rotated_vectors
+
+
+def interpolate_and_slice(image,
+                          coords,
+                          size, 
+                          smoothness=200):
+
+
+    # Now that I also want to return the geometries, I need to return a dictionary
+    slice_dict = {}
+    geometry_dict = {}
+    #coords are a bit confusing in order...
+    x = coords[:,0]
+    y = coords[:,1]
+    z = coords[:,2]
+
+
+    coords = np.array([z,y,x]).transpose([1,0])
+
+    #convert the image to SITK (here let's use the intensity for now)
+    sitk_image = sitk.GetImageFromArray(image[:,:,:])
+
+    # spline parametrization
+    params = [i / (size[2] - 1) for i in range(size[2])]
+    tck, _ = interpolate.splprep(np.swapaxes(coords, 0, 1), k=3, s=smoothness)
+
+    # derivative is tangent to the curve
+    points = np.swapaxes(interpolate.splev(params, tck, der=0), 0, 1)
+    Zs = np.swapaxes(interpolate.splev(params, tck, der=1), 0, 1)
+    direc = np.array(sitk_image.GetDirection()[3:6])
+
+    slices = []
+    for i in range(len(Zs)):
+        geometry_dict[f"slice_{i}"] = {}
+        # I define the x'-vector as the projection of the y-vector onto the plane perpendicular to the spline
+        xs = (direc - np.dot(direc, Zs[i]) / (np.power(np.linalg.norm(Zs[i]), 2)) * Zs[i])
+        output_dict = extract_slice_from_sitk_image(sitk_image, points[i], Zs[i], xs, list(size[:2]) + [1], fill_value=0)
+        sitk_slice = output_dict['resampled_sitk_image']
+        geometry_dict[f"slice_{i}"]['transform'] = output_dict['transform']
+        geometry_dict[f"slice_{i}"]['origin'] = output_dict['origin']
+        # Add centerline points to geometry_dict
+        geometry_dict[f"slice_{i}"]['centerline_points'] = points[i]
+        np_image = sitk.GetArrayFromImage(sitk_slice).transpose(2, 1, 0)
+        slices.append(np_image)
+
+    # stick slices together
+    slice_dict['straightened'] = np.concatenate(slices, axis=2)
+    slice_dict['geometry_dict'] = geometry_dict
+    return slice_dict
+
+
+def nearest_neighbors(q,points,num_neighbors=2,exclude_self=True):
+    d = ((points-q)**2).sum(axis=1)  # compute distances
+    ndx = d.argsort() # indirect sort 
+    start_ind = 1 if exclude_self else 0
+    end_ind = start_ind+num_neighbors
+    ret_inds = ndx[start_ind:end_ind]
+    return ret_inds
+
+def calc_angle(v1, v2, reflex=False):
+    dot_prod = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+    #round dot_prod for numerical stability
+    angle = np.arccos(np.around(dot_prod,6))
+    
+    if (reflex == False):
+        return angle
+    else:
+        return 2 * np.pi - angle
+    
+# TODO: Limitation because of the while loop, how do you find the last point
+def order_points(candidate_points, angle_threshold=np.pi/2.):
+    ordered_points = []
+    
+    #take first point
+    ordered_points.append(candidate_points[0])
+    nn = nearest_neighbors(ordered_points[-1], candidate_points,num_neighbors=1)
+    #take second point
+    ordered_points.append(candidate_points[nn[0]])
+    
+    remove = 0
+    while(len(ordered_points)<len(candidate_points)):
+        
+        #get 10 nearest neighbors of latest point
+        nn = nearest_neighbors(ordered_points[-1], candidate_points,num_neighbors=10)
+        # Taking the current point and the previous, we compute the angle to the current and eventual neighbourg
+        # making sure its acute
+        found = 0
+        
+        for cp_i in nn:
+            ang = calc_angle(ordered_points[-2]-ordered_points[-1], candidate_points[cp_i]-ordered_points[-1])
+            if ang > (angle_threshold):
+                found =1
+
+                ordered_points.append(candidate_points[cp_i])
+            if found == 1:
+                break 
+        if found ==0:
+            if remove >5:
+                break
+            
+            candidate_points = list(candidate_points)
+            candidate_points = [arr for arr in candidate_points if not np.array_equal(arr, ordered_points[-1])]
+            candidate_points = np.array(candidate_points)
+            ordered_points.pop()
+            remove += 1
+    ordered_points = np.array(ordered_points)
+
+    return(ordered_points)
+
+def skeleton_points(segmented, dilation_k=0, erosion_k = 0):
+    # Average the segmentation over time (the geometry should be the same over time)
+    avg = np.average(segmented, axis = 3)
+    if dilation_k > 0:
+        avg = binary_erosion(avg, selem=np.ones((erosion_k, erosion_k,erosion_k)))
+        avg = dilation(avg, selem=np.ones((dilation_k, dilation_k,dilation_k)))
+        
+    # Compute the centerline points of the skeleton
+    skeleton = skeletonize_3d(avg[:,:,:])
+   
+    # Get the points of the centerline as an array
+    points = np.array(np.where(skeleton != 0)).transpose([1,0])
+
+    # Order the points in ascending order with x
+    points = points[points[:,0].argsort()[::-1]]
+    
+    return points
+
 
 # ==================================================================
 # ==================================================================
-# Apply Poisson Image Blending on the fly
+# Helper functions during training
 # ==================================================================
 # ==================================================================
-# TODO: edge case if anomaly would be in several places and then you'd start mixing slices together....
-# Chek that by looking at the original slices and make sure they follow each other with a step of 1
+
+def save_inputs_outputs(n_image, epoch, input_, ouput_, config, labels=None, training=True):
+    if training:
+        path_inter_inputs = os.path.join(config['exp_path'], 'intermediate_results/training/inputs')
+        path_inter_outputs = os.path.join(config['exp_path'], 'intermediate_results/training/outputs')
+    else:
+        path_inter_inputs = os.path.join(config['exp_path'], 'intermediate_results/validation/inputs')
+        path_inter_outputs = os.path.join(config['exp_path'], 'intermediate_results/validation/outputs')
+    
+    make_dir_safely(path_inter_inputs)
+    make_dir_safely(path_inter_outputs)
+    if config['self_supervised']:
+        # Apply sigmoid to output
+        ouput_ = torch.sigmoid(ouput_)
+        if training:
+            path_inter_masks = os.path.join(config['exp_path'], 'intermediate_results/training/masks')
+        else:
+            path_inter_masks = os.path.join(config['exp_path'], 'intermediate_results/validation/masks')
+        make_dir_safely(path_inter_masks)
+        labels = labels.cpu().detach().numpy()
+        np.save(os.path.join(path_inter_masks,f"mask_image_{n_image}_epoch_{epoch}.npy"), labels)
+
+
+    input_cpu = input_.cpu().detach().numpy()
+    output_cpu = ouput_.cpu().detach().numpy()
+    np.save(os.path.join(path_inter_inputs,f"input_image_{n_image}_epoch_{epoch}.npy"), input_cpu)
+    np.save(os.path.join(path_inter_outputs,f"output_image_{n_image}_epoch_{epoch}.npy"), output_cpu)
+    
+# Not used in paper, experimental phase (for conditional network)
 def find_subsequence_and_complete(slices, subseq):
     """
         Find a subsequence in an array of slices and complete the subsequence if not found.
@@ -77,7 +399,7 @@ def find_subsequence_and_complete(slices, subseq):
         array([36, 37, 38])
 
     """
-    mod_slices = slices % len(subseq)  # modulus operation
+    mod_slices = slices % len(subseq)
     
     subseq_len = len(subseq)
 
@@ -113,6 +435,11 @@ def find_subsequence_and_complete(slices, subseq):
             return np.array([slices[0]-2, slices[0]-1, slices[0]])
 
     return np.array([0,1,2])  # if no such subsequence or continuous sequence found we give the original slices thus image
+
+# ==================================================================
+# Apply Poisson Image Blending on the fly during training
+# ==================================================================
+
 def apply_blending(input_images, images_for_blend, mask_blending):
     # If the input_images are 4D + batch (b,x,y,t,c) we put channels in second dimension
     if len(input_images.shape) == 5:
@@ -135,25 +462,17 @@ def apply_blending(input_images, images_for_blend, mask_blending):
         if np.random.rand() > 0.5:
             # Apply Poisson blending with mixing
             blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
-            #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
-            #blending_function = Cutout(labeller)
-            #blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
             blended_image, anomaly_mask = blending_function(input_, mask_blending)
             # output shape of blended image c,x,y,t
             # ouput shape of anomaly mask x,y,t
 
         else:
-            # Apply Poisson blending with source
-            
-            #blending_function = TestPoissonImageEditingSourceGradBlender(labeller, blender, mask_blending)
-            #blending_function = TestPatchInterpolationBlender(labeller, blender, mask_blending)
-            #blending_function = Cutout(labeller)
+            # If you want to add another type of blending
             blending_function = TestPoissonImageEditingMixedGradBlender(labeller, blender, mask_blending)
             blended_image, anomaly_mask = blending_function(input_, mask_blending)
             
-        #
-        # If we have the extended slices for the conditional network then we need to remove the repeated sequences
         
+        # If we have the extended slices for the conditional network then we need to remove the repeated sequences
         if len(input_images.shape) == 6:
             z_slices_with_anomalies = np.unique(np.where(anomaly_mask != 0)[0])
             sequence = np.array([0, 1, 2]) # We have three slices
@@ -161,10 +480,7 @@ def apply_blending(input_images, images_for_blend, mask_blending):
 
             blended_image = blended_image[:, z_slices_to_use, ...] # Channel in first dimension
             anomaly_mask = anomaly_mask[z_slices_to_use, ...] # No channel dimension
-        
-        
-            
-            
+
         # Expand dims to add batch dimension
         blended_image = np.expand_dims(blended_image, axis=0)
         anomaly_mask = np.expand_dims(anomaly_mask, axis=0)
@@ -179,13 +495,9 @@ def apply_blending(input_images, images_for_blend, mask_blending):
         blended_images = np.transpose(blended_images, (0,2,3,4,5,1))
     return blended_images, anomaly_masks
 
-## ==================================================================
 # ==================================================================
 # Compute the XYZ Euler angles and trace for each 3x3 rotation matrix in a batch
 # ==================================================================
-## ==================================================================
-
-
 
 def compute_euler_angles_xyz_and_trace(rotation_matrices):
     """
@@ -226,15 +538,10 @@ def compute_euler_angles_xyz_and_trace(rotation_matrices):
 
     return dict_results
 
-
-
-
-
-# ==================================================================
 # ==================================================================
 # Compute losses
 # ==================================================================
-# ==================================================================
+
 
 def compute_losses(input_images, output_dict, config, input_dict= None):
     # Compute the standard VAE losses
@@ -247,8 +554,8 @@ def compute_losses(input_images, output_dict, config, input_dict= None):
     euler_loss = torch.tensor(0.0)
     trace_loss = torch.tensor(0.0)
 
-    # Check if the model is 'conv_enc_dec_aux' and compute auxiliary losses
-    if config['model'] == 'conv_enc_dec_aux':
+    # Check if the model is encoder decoder and compute auxiliary losses
+    if config['model'].__contains__('conv_enc_dec_aux'):
         # Assuming you have ground truth values for Euler angles and trace
         true_euler_angles = input_dict['euler_angles']
         true_trace = input_dict['trace']
@@ -257,11 +564,10 @@ def compute_losses(input_images, output_dict, config, input_dict= None):
         predicted_euler_angles = output_dict['euler_angles']
         predicted_trace = output_dict['trace']
         
-        
-        #euler_loss = l2loss(predicted_euler_angles, true_euler_angles)
-        #trace_loss = l2loss(predicted_trace, true_trace)
+        euler_loss_factor = config.get('euler_angle_loss_factor', 1.0)
         # Use MSE loss for Euler angles and trace
         euler_loss = torch.mean((predicted_euler_angles - true_euler_angles) ** 2, dim=1)
+        euler_loss = euler_loss_factor * euler_loss
         trace_loss = torch.mean((predicted_trace - true_trace) ** 2, dim=1)
 
         # Factor to adjust the importance of auxiliary losses
@@ -320,264 +626,12 @@ def compute_losses_VAE(input_images, output_dict, config):
     dict_loss = {'loss': loss,'val_loss': val_loss, 'gen_factor_loss': gen_factor_loss,'gen_loss': gen_loss, 'res_loss': res_loss, 'lat_loss': lat_loss}
     return dict_loss
 
-# ==========================================        
-# function to normalize the input arrays (intensity and velocity) to a range between 0 to 1.
-# magnitude normalization is a simple division by the largest value.
-# velocity normalization first calculates the largest magnitude velocity vector
-# and then scales down all velocity vectors with the magnitude of this vector.
-# ==========================================        
-def normalize_image(image):
-
-    # ===============    
-    # initialize with zeros
-    # ===============
-    normalized_image = np.zeros((image.shape))
-    
-    # ===============
-    # normalize magnitude channel
-    # ===============
-    normalized_image[...,0] = image[...,0] / np.amax(image[...,0])
-    
-    # ===============
-    # normalize velocities
-    # ===============
-    
-    # extract the velocities in the 3 directions
-    velocity_image = np.array(image[...,1:4])
-    
-    # denoise the velocity vectors
-    velocity_image_denoised = gaussian_filter(velocity_image, 0.5)
-    
-    # compute per-pixel velocity magnitude    
-    velocity_mag_image = np.linalg.norm(velocity_image_denoised, axis=-1)
-    
-    # velocity_mag_array = np.sqrt(np.square(velocity_arrays[...,0])+np.square(velocity_arrays[...,1])+np.square(velocity_arrays[...,2]))
-    # find max value of 95th percentile (to minimize effect of outliers) of magnitude array and its index
-    vpercentile = np.percentile(velocity_mag_image, 95)    
-    normalized_image[...,1] = velocity_image_denoised[...,0] / vpercentile
-    normalized_image[...,2] = velocity_image_denoised[...,1] / vpercentile
-    normalized_image[...,3] = velocity_image_denoised[...,2] / vpercentile  
-  
-    return normalized_image
-
-from scipy.ndimage import gaussian_filter
-
-
-
-import numpy as np
-def normalize_image_new(image, with_percentile = None, with_set_range = None):
-
-    # ===============
-    # initialize with zeros
-    # ===============
-    normalized_image = np.zeros((image.shape))
-
-    # ===============
-    # normalize magnitude channel
-    # ===============
-    normalized_image[...,0] = image[...,0] / np.amax(image[...,0])
-
-    # ===============
-    # normalize velocities
-    # ===============
-
-    # extract the velocities in the 3 directions
-    velocity_image = np.array(image[...,1:4])
-
-    # denoise the velocity vectors on the spatial and time dimensions but not across channels
-    velocity_image_denoised = gaussian_filter(velocity_image, sigma=(0.5,0.5,0.5,0.5,0))
-
-    # compute per-pixel velocity magnitude
-    velocity_mag_image = np.linalg.norm(velocity_image_denoised, axis=-1)
-
-    if with_percentile is not None and len(with_percentile) == 2:
-        
-        vpercentile_min = np.percentile(velocity_image_denoised, with_percentile[0])
-        vpercentile_max = np.percentile(velocity_image_denoised, with_percentile[1])
-
-        # Normalize the velocity vectors
-        normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
-        normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
-        normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - vpercentile_min)/ (vpercentile_max - vpercentile_min)-1
-
-        # Clip the values to be in the range [-1,1]
-        normalized_image = np.clip(normalized_image, -1, 1)
-    
-    elif with_set_range is not None and len(with_set_range) == 2:
-            
-            # Values will already be negative so I can just divide by the postive value
-            # Normalize the velocity vectors
-            normalized_image[...,1] = velocity_image_denoised[...,0]/with_set_range[1]
-            normalized_image[...,2] = velocity_image_denoised[...,1]/with_set_range[1]
-            normalized_image[...,3] = velocity_image_denoised[...,2]/with_set_range[1]
-    
-
-    else:    
-
-        normalized_image[...,1] = 2.*(velocity_image_denoised[...,0] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
-        normalized_image[...,2] = 2.*(velocity_image_denoised[...,1] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
-        normalized_image[...,3] = 2.*(velocity_image_denoised[...,2] - np.min(velocity_image_denoised))/ np.ptp(velocity_image_denoised)-1
-
-    return normalized_image
-
-
-# ==================================================================    
-# ==================================================================    
-def make_dir_safely(dirname):
-    # directory = os.path.dirname(dirname)
-    if not os.path.exists(dirname):
-        os.makedirs(dirname)
-
-
-
-
-def crop_or_pad_Bern_all_slices(data, new_shape):
-    #processed_data = np.zeros(new_shape)
-    
-    # axis 0 is the x-axis and we crop from top since aorta is at the bottom
-    # axis 1 is the y-axis and we pad 
-    # The axis two we leave since it'll just be the batch dimension
-    delta_axis0 = data.shape[0] - new_shape[0]
-    delta_axis1 = data.shape[1] - new_shape[1]
-    if len(new_shape) == 5: # Image (x,y,None, t,c) - the z will be batch and will vary doesn't need to be equal
-        processed_data = np.zeros((new_shape[0], new_shape[1], data.shape[2], new_shape[3], new_shape[4]))
-        if delta_axis1 <= 0:
-        # The x is always cropped, y padded
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,...]
-        else:
-            # x croped and y cropped equally either way
-            processed_data[:, :,:,:data.shape[3],... ] = data[delta_axis0:, (delta_axis1//2):-(delta_axis1//2),...]
-
-
-    if len(new_shape) == 4: # Label
-        processed_data = np.zeros((new_shape[0], new_shape[1], data.shape[2], new_shape[3]))
-        # The x is always cropped, y always padded
-        processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,...]
-    return processed_data
-
-def crop_or_pad_normal_slices(data, new_shape):
-    
-    processed_data = np.zeros(new_shape)
-    # axis 0 is the x-axis and we crop from top since aorta is at the bottom
-    # axis 1 is the y-axis and we crop equally from both sides
-    # axis 2 is the z-axis and we crop from the right (end of the image) since aorta is at the left
-    delta_axis0 = data.shape[0] - new_shape[0]
-    
-    if len(new_shape) == 5: # Image
-        # The x is always cropped, y always padded, z_cropped
-        try:
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
-        except:
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],:new_shape[3],...]
-
-    if len(new_shape) == 4: # Label
-        # The x is always cropped, y always padded, z_cropped
-        try:
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],...]
-        except:
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:new_shape[1], :new_shape[2],:new_shape[3],...]
-    return processed_data
-
-
-def crop_or_pad_Bern_slices(data, new_shape):
-    processed_data = np.zeros(new_shape)
-    # axis 0 is the x-axis and we crop from top since aorta is at the bottom
-    # axis 1 is the y-axis and we pad
-    # axis 2 is the z-axis and we crop from the right (end of the image) since aorta is at the left
-    delta_axis0 = data.shape[0] - new_shape[0]
-    if len(new_shape) == 5: # Image
-        # The x is always cropped, y always padded, z_cropped
-        try:
-            # Pad time
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
-        except:
-            # Crop time
-            processed_data[:, :data.shape[1],:,:,... ] = data[delta_axis0:,:, :new_shape[2],:new_shape[3],...]
-
-    if len(new_shape) == 4: # Label
-        # The x is always cropped, y always padded, z_cropped
-        try:
-            
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],...]
-        except:
-            processed_data[:, :data.shape[1],:,:data.shape[3],... ] = data[delta_axis0:,:, :new_shape[2],:new_shape[3],...]
-    return processed_data
-
-# ==================================================================
-# crop or pad functions to change image size without changing resolution
-# ==================================================================    
-def crop_or_pad_4dvol_along_0(vol, n):    
-    x = vol.shape[0]
-    x_s = (x - n) // 2
-    x_c = (n - x) // 2
-    if x > n: # original volume has more slices that the required number of slices
-        vol_cropped = vol[x_s:x_s + n, :, :, :, :]
-    else: # original volume has equal of fewer slices that the required number of slices
-        vol_cropped = np.zeros((n, vol.shape[1], vol.shape[2], vol.shape[3], vol.shape[4]))
-        vol_cropped[x_c:x_c + x, :, :, :, :] = vol
-    return vol_cropped
-
-# ==================================================================
-# crop or pad functions to change image size without changing resolution
-# ==================================================================    
-def crop_or_pad_4dvol_along_1(vol, n):    
-    x = vol.shape[1]
-    x_s = (x - n) // 2
-    x_c = (n - x) // 2
-    if x > n: # original volume has more slices that the required number of slices
-        vol_cropped = vol[:, x_s:x_s + n, :, :, :]
-    else: # original volume has equal of fewer slices that the required number of slices
-        vol_cropped = np.zeros((vol.shape[0], n, vol.shape[2], vol.shape[3], vol.shape[4]))
-        vol_cropped[:, x_c:x_c + x, :, :, :] = vol
-    return vol_cropped
-
-# ==================================================================
-# crop or pad functions to change image size without changing resolution
-# ==================================================================    
-def crop_or_pad_4dvol_along_2(vol, n):    
-    x = vol.shape[2]
-    x_s = (x - n) // 2
-    x_c = (n - x) // 2
-    if x > n: # original volume has more slices that the required number of slices
-        vol_cropped = vol[:, :, x_s:x_s + n, :, :]
-    else: # original volume has equal of fewer slices that the required number of slices
-        vol_cropped = np.zeros((vol.shape[0], vol.shape[1], n, vol.shape[3], vol.shape[4]))
-        vol_cropped[:, :, x_c:x_c + x, :, :] = vol
-    return vol_cropped
-
-# ==================================================================
-# crop or pad functions to change image size without changing resolution
-# ==================================================================    
-def crop_or_pad_4dvol_along_3(vol, n):    
-    x = vol.shape[3]
-    x_s = (x - n) // 2
-    x_c = (n - x) // 2
-    if x > n: # original volume has more slices that the required number of slices
-        vol_cropped = vol[:, :, :, x_s:x_s + n, :]
-    else: # original volume has equal of fewer slices that the required number of slices
-        vol_cropped = np.zeros((vol.shape[0], vol.shape[1], vol.shape[2], n, vol.shape[4]))
-        vol_cropped[:, :, :, x_c:x_c + x, :] = vol
-    return vol_cropped
-
-# ==================================================================
-# crop or pad functions to change image size without changing resolution
-# ==================================================================    
-def crop_or_pad_4dvol(vol, target_size):
-    
-    vol = crop_or_pad_4dvol_along_0(vol, target_size[0])
-    vol = crop_or_pad_4dvol_along_1(vol, target_size[1])
-    vol = crop_or_pad_4dvol_along_2(vol, target_size[2])
-    vol = crop_or_pad_4dvol_along_3(vol, target_size[3])
-                
-    return vol
-
-
 
 
 
 # ==================================================================
 # ==================================================================
-# Utils for backtrasnforming the anomaly scores
+# Utils for backtransforming the anomaly scores
 # ==================================================================
 # ==================================================================
 # We need to pad it back to original 36,36,64 - it was down to 32 for network reasons 
@@ -640,10 +694,7 @@ def resample_back(anomaly_score, sitk_original_image, geometry_dict):
     # Might be good idea to save this. 
     return anomaly_score_4d_image
 
-# ==================================================================
 # To visualize the backtransformed anomaly scores we need to convert them to vtk
-# ==================================================================
-"""
 def convert_to_vtk(backtransformed_anomaly_score, subject_id, save_dir):
     # Note that you will need to threshold just above zero to get the
     # anomaly score to show up in paraview since we fill up the background
@@ -678,9 +729,6 @@ def convert_to_vtk(backtransformed_anomaly_score, subject_id, save_dir):
         anomaly_score_grid.point_data.scalars = anomaly_score_vec
         anomaly_score_grid.point_data.scalars.name = 'anomaly_score_intensity'
         write_data(anomaly_score_grid, os.path.join(save_dir,f"{subject_id}_anomaly_score_t{time_slice}.vtk"))
-"""
-
-"""
     
 # ==================================================================
 # Combine the functions to backtransform the anomaly scores
@@ -689,10 +737,160 @@ def backtransform_anomaly_scores(anomaly_score, subject_id, output_dir, geometry
     # Expand the anomaly score to the original size
     anomaly_score = expand_normal_slices(anomaly_score,[36,36,64,24,4])
     # Backtransform the anomaly score
-    backtransformed_anomaly_score = resample_back(anomaly_score, geometry_dict)
-    # Save the backtransformed anomaly score
-    #np.save(os.path.join(output_dir, subject_id, f"{subject_id}_backtransformed_anomaly_score.npy"), backtransformed_anomaly_score)
+    backtransformed_anomaly_score = resample_back(anomaly_score, geometry_dict)    
     # Convert to vtk
     convert_to_vtk(backtransformed_anomaly_score, subject_id, output_dir)
 
-"""
+
+
+# ==================================================================    
+# Helper functions for quadrants creation
+# ==================================================================    
+
+def compute_quadrant_mask_main_axes(ang, ang2):
+    """
+    Compute a mask that highlights a quadrant based on the main axes angles.
+
+    Parameters:
+    ang (float): Primary angle in radians.
+    ang2 (float): Secondary angle in radians.
+
+    Returns:
+    torch.Tensor: A tensor representing the quadrant mask.
+    """
+    quad_mask = torch.zeros([1, 1, 32, 32])
+
+    # Create a grid of coordinates ranging from -1 to 1
+    d1 = torch.linspace(1., -1., quad_mask.shape[-2])
+    d2 = torch.linspace(-1., 1., quad_mask.shape[-1])
+    d1v, d2v = torch.meshgrid(d1, d2, indexing='ij')
+
+    for i in range(quad_mask.shape[-2]):
+        for j in range(quad_mask.shape[-1]):
+            cur_coor = torch.complex(d2v[i, j], d1v[i, j])
+            ref_angle = torch.polar(torch.tensor(1.), torch.tensor(ang, dtype=torch.float32))
+            ref_angle2 = torch.polar(torch.tensor(1.), torch.tensor(ang2, dtype=torch.float32))
+            pi_angle = torch.polar(torch.tensor(1.), torch.tensor(np.pi, dtype=torch.float32))
+
+            # Calculate half angle difference between primary and secondary vectors
+            cur_ref_diff = torch.angle(cur_coor * torch.conj(ref_angle))
+            ref2_ref_diff = torch.angle(ref_angle2 * torch.conj(ref_angle)) / 2.
+            ref2pi_ref_diff = torch.angle((ref_angle2 * pi_angle) * torch.conj(ref_angle)) / 2.
+
+            # Determine which axis is on the same side of the midpoint
+            if torch.sign(cur_ref_diff) == torch.sign(ref2_ref_diff):
+                closer_ref_diff = ref2_ref_diff
+            else:
+                closer_ref_diff = ref2pi_ref_diff
+
+            # Assign the mask value based on the angle difference
+            if torch.abs(cur_ref_diff) < torch.abs(closer_ref_diff):
+                quad_mask[0, 0, i, j] = 1
+
+    return quad_mask
+
+def create_all_quadrant_masks_main_axes(ax_angles):
+    """
+    Create masks for all quadrants based on the main axes angles (extracted thanks to sobel filters).
+    1. A mask with quandrants, Posterior, Right, Anterior, Left
+
+    Parameters:
+    ax_angles (list): List of two angles [primary_angle, secondary_angle] in radians.
+
+    Returns:
+    torch.Tensor: A combined tensor of all quadrant masks with shape [1, 4, 32, 32].
+    """
+    primary_angle = ax_angles[0]  # Anterior-Posterior angle
+    secondary_angle = ax_angles[1]  # Left-Right angle
+
+    # Compute quadrant masks
+    quad_mask_P = compute_quadrant_mask_main_axes(primary_angle, secondary_angle)  # Posterior
+    quad_mask_R = compute_quadrant_mask_main_axes(secondary_angle, primary_angle)  # Right
+    quad_mask_A = compute_quadrant_mask_main_axes(primary_angle + np.pi, secondary_angle + np.pi)  # Anterior
+    quad_mask_L = compute_quadrant_mask_main_axes(secondary_angle + np.pi, primary_angle + np.pi)  # Left
+
+    quad_masks = [quad_mask_P, quad_mask_R, quad_mask_A, quad_mask_L]
+
+    # Stack masks into a single tensor of shape [1, 4, 32, 32]
+    combined_mask = torch.cat(quad_masks, dim=1)
+
+    return combined_mask
+
+
+
+def compute_single_quadrant_mask_between_axes(ang, ang2):
+    """
+    Compute a mask that highlights a single quadrant based on the provided angles.
+
+    Parameters:
+    ang (float): Primary angle in radians.
+    ang2 (float): Secondary angle in radians.
+
+    Returns:
+    torch.Tensor: A tensor representing the quadrant mask.
+    """
+    quad_mask = torch.zeros([32, 32])
+
+    # Create a grid of coordinates ranging from -1 to 1
+    d1 = torch.linspace(1., -1., 32)
+    d2 = torch.linspace(-1., 1., 32)
+    d1v, d2v = torch.meshgrid(d1, d2, indexing='ij')
+
+    # Loop over each point in the grid
+    for i in range(32):
+        for j in range(32):
+            # Calculate the current coordinate as a complex number
+            cur_coor = torch.complex(d2v[i, j], d1v[i, j])
+            # Create polar coordinates for the reference angles
+            ref_angle = torch.polar(torch.tensor(1.), torch.tensor(ang, dtype=torch.float32))
+            ref_angle2 = torch.polar(torch.tensor(1.), torch.tensor(ang2, dtype=torch.float32))
+        
+            # Calculate the midpoint angle between ref_angle and ref_angle2
+            mid_angle = (ref_angle + ref_angle2) / 2.
+            # Calculate angle differences
+            cur_mid_diff = torch.angle(cur_coor * torch.conj(mid_angle))
+            ref_mid_diff = torch.angle(ref_angle * torch.conj(mid_angle))
+            ref_mid_diff2 = torch.angle(ref_angle2 * torch.conj(mid_angle))
+        
+            # Determine which reference angle is closer
+            if torch.sign(cur_mid_diff) == torch.sign(ref_mid_diff):
+                closer_ref_diff = ref_mid_diff
+            else:
+                closer_ref_diff = ref_mid_diff2
+            
+            # Assign the mask value based on the angle difference
+            if torch.abs(cur_mid_diff) < torch.abs(closer_ref_diff):
+                quad_mask[i, j] = 1
+
+    return quad_mask
+
+def compute_all_quadrant_masks_between_axes(ax_angles):
+    """
+    Compute masks for all quadrants based on the main axes angles. We take them in between.
+    2. A mask with quandrants, Posterior-right, Anterior-right, Posterior-left, Anterior-left 
+
+    Parameters:
+    ax_angles (list): List of two angles [primary_angle, secondary_angle] in radians.
+
+    Returns:
+    torch.Tensor: A combined tensor of all quadrant masks with shape [1, 4, 32, 32].
+    """
+    primary_angle = ax_angles[0]
+    secondary_angle = ax_angles[1]
+    
+    # Define the angles for each quadrant
+    angles = [
+        (primary_angle, secondary_angle),  # Quadrant between primary and secondary angles
+        (primary_angle + np.pi, secondary_angle),  # Opposite of primary angle
+        (secondary_angle + np.pi, primary_angle),  # Opposite of secondary angle
+        (primary_angle + np.pi, secondary_angle + np.pi)  # Both angles rotated by 180 degrees
+    ]
+    
+    # Compute masks for each quadrant
+    masks = [compute_single_quadrant_mask_between_axes(a1, a2) for a1, a2 in angles]
+    
+    # Stack masks into a single tensor of shape [1, 4, 32, 32]
+    return torch.stack(masks).unsqueeze(0)
+
+
+
