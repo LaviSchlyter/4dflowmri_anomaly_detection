@@ -14,7 +14,7 @@ The main functions and their purposes are:
 - generate_deformation_chan: Generates deformed versions of input images and corresponding masks.
 - create_hollow_noise: Creates hollow noise patterns in the images.
 - create_cube_mask: Creates a cube mask for blending operations.
-- get_image_to_blend: Selects a random image for blending.
+- select_random_image_for_blending: Selects a random image for blending.
 - prepare_and_write_synthetic_data: Prepares and writes synthetic data with various deformations to an HDF5 file.
 - load_create_syntetic_data: Loads or creates synthetic data based on specified configurations.
 
@@ -37,6 +37,8 @@ import sys
 import h5py
 import numpy as np
 import random
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
 
 sys.path.append('/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection')
@@ -367,7 +369,7 @@ def create_cube_mask_4D(mask_size, WH, depth=7, inside=True):
 
     return mask
 
-def get_image_to_blend(loop_index, data, n_patients, z_slices = 64):
+def select_random_image_for_blending(loop_index, data, n_patients, z_slices = 64):
         # We pick a random image to blend but same location 
         z_slice = loop_index%z_slices
         patient = loop_index//z_slices
@@ -379,6 +381,47 @@ def get_image_to_blend(loop_index, data, n_patients, z_slices = 64):
         image_for_blend = image_for_blend.transpose(3, 0, 1, 2)
         return image_for_blend
 
+
+def process_poisson_blending(image, j, data, n_patients, z_slices, mask_blending, labeller, dataset, i, data_shape, blending_task_class):
+    """
+    Helper function to process Poisson image blending.
+    
+    :param image: The input image.
+    :param j: Current index of the image.
+    :param data: Full dataset.
+    :param n_patients: Number of patients.
+    :param z_slices: Number of slices per patient.
+    :param mask_blending: Mask used for blending.
+    :param labeller: The labeller to be used.
+    :param dataset: The dataset where results will be saved.
+    :param i: Current index of the deformation.
+    :param data_shape: Shape of the data.
+    :param blending_task_class: Class of the blending task (e.g. mixed or non-mixed).
+    """
+    # Process image and apply Poisson blending
+    image = np.squeeze(image, axis=0)
+    image = image.transpose(3, 0, 1, 2)
+    image_for_blend = select_random_image_for_blending(j, data, n_patients, z_slices=z_slices)
+    
+    # Instantiate the blender class
+    poisson_task = blending_task_class(labeller, image_for_blend, mask_blending)
+    
+    # Create the blended image and anomaly mask
+    blended_image, anomaly_mask = poisson_task(image, mask_blending)
+    
+    # Binarize the mask
+    anomaly_mask[anomaly_mask != 0] = 1
+    
+    # Add a channel dimension to mask, repeating it for each channel
+    anomaly_mask = np.repeat(anomaly_mask[..., np.newaxis], image.shape[0], axis=-1)
+    
+    # Reorder dimensions for saving
+    blended_image = blended_image.transpose(1, 2, 3, 0)
+    
+    # Save the image and mask to the dataset
+    dataset['images'][i * data_shape[0] + j, :, :, :, :] = blended_image
+    dataset['masks'][i * data_shape[0] + j, :, :, :, :] = anomaly_mask
+
 def prepare_and_write_synthetic_data(data,
                                     deformation_list,
                                     filepath_output,
@@ -386,7 +429,8 @@ def prepare_and_write_synthetic_data(data,
     
     data_shape = data.shape # [Number of patients * z_slices, x, y, t, num_channels]
     n_patients = data_shape[0] // z_slices
-    print(f"Number of patients to process: {n_patients}")
+    logging.info(f"Number of patients to process: {n_patients}")
+    
     # ==========================================
     # we will stack all images along their z-axis
     # --> the network will analyze (x,y,t) volumes
@@ -422,7 +466,8 @@ def prepare_and_write_synthetic_data(data,
     
     # For each type of deformation, we create a new image for each patient and each slice
     for i, deformation_type in enumerate(deformation_list):
-        print('Creating images for deformation type: ', deformation_type)
+        logging.info(f"Creating images for deformation type: {deformation_type}")
+        
         if deformation_type == 'None':
             # We do not create a new image, we just copy the original image
             dataset['images'][i*data_shape[0]:(i+1)*data_shape[0],:,:,:,:] = data
@@ -431,7 +476,8 @@ def prepare_and_write_synthetic_data(data,
             for j, image in enumerate(data):
                 # Logging the progress out of total
                 if j % 10 == 0:
-                    print(f"Processing image {j} of {data_shape[0]}")
+                    logging.info(f"Processing image {j} of {data_shape[0]}")
+                    
 
 
                 # Add batch dimension to 1
@@ -467,7 +513,7 @@ def prepare_and_write_synthetic_data(data,
                     # Here we don't except a batch dimension but channel should be first
                     image = np.squeeze(image, axis=0)
                     image = image.transpose(3, 0, 1, 2)
-                    image_for_blend = get_image_to_blend(j, data, n_patients, z_slices = z_slices)
+                    image_for_blend = select_random_image_for_blending(j, data, n_patients, z_slices = z_slices)
                     # Instantiate the patch interpolation class
                     patch_interp_task = TestPatchInterpolationBlender(labeller, image_for_blend, mask_blending)
 
@@ -486,52 +532,11 @@ def prepare_and_write_synthetic_data(data,
 
 
                 elif deformation_type == 'poisson_with_mixing':
-                    # Here we don't except a batch dimension but channel should be first
-                    image = np.squeeze(image, axis=0)
-                    image = image.transpose(3, 0, 1, 2)
-                    image_for_blend = get_image_to_blend(j, data, n_patients, z_slices = z_slices)
-
-                    # Instantiate the poisson with mixing class
-                    poisson_image_editing_mixed_task = TestPoissonImageEditingMixedGradBlender(labeller, image_for_blend, mask_blending)
-
-                    # Create the blended image
-                    blended_image, anomaly_mask = poisson_image_editing_mixed_task(image, mask_blending)
-
-                    # Binarize the mask
-                    anomaly_mask[anomaly_mask != 0] = 1
-                    # Add a channel dimension to mask repeating it for each channel
-                    anomaly_mask = np.repeat(anomaly_mask[..., np.newaxis], image.shape[0], axis=-1)
-                    
-
-                    blended_image = blended_image.transpose(1, 2, 3, 0)
-
-                    # Save image and mask
-                    dataset['images'][i*data_shape[0] + j,:,:,:,:] = blended_image
-                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = anomaly_mask
+                    process_poisson_blending(image, j, data, n_patients, z_slices, mask_blending, labeller, dataset, i, data_shape, TestPoissonImageEditingMixedGradBlender)
 
                     
                 elif deformation_type == 'poisson_without_mixing':
-                    
-                    # Here we don't except a batch dimension but channel should be first
-                    image = np.squeeze(image, axis=0)
-                    image = image.transpose(3, 0, 1, 2)
-                    image_for_blend = get_image_to_blend(j, data, n_patients, z_slices = z_slices)
-
-                    # Instantiate the poisson without mixing class
-                    poisson_image_editing_source_task = TestPoissonImageEditingSourceGradBlender(labeller, image_for_blend, mask_blending)
-
-                    # Create the blended image
-                    blended_image, anomaly_mask = poisson_image_editing_source_task(image, mask_blending)
-
-                    # Binarize the mask
-                    anomaly_mask[anomaly_mask != 0] = 1
-                    # Add a channel dimension to mask repeating it for each channel
-                    anomaly_mask = np.repeat(anomaly_mask[..., np.newaxis], image.shape[0], axis=-1)
-                    blended_image = blended_image.transpose(1, 2, 3, 0)
-
-                    # Save image and mask
-                    dataset['images'][i*data_shape[0] + j,:,:,:,:] = blended_image
-                    dataset['masks'][i*data_shape[0] + j,:,:,:,:] = anomaly_mask
+                    process_poisson_blending(image, j, data, n_patients, z_slices, mask_blending, labeller, dataset, i, data_shape, TestPoissonImageEditingSourceGradBlender)
 
                     
                 else:
@@ -565,8 +570,7 @@ def load_create_syntetic_data(data,
         dataset_filepath = savepath + f'/{preprocessing_method}_anomalies_images_from_' + str(idx_start) + '_to_' + str(idx_end) + '.hdf5'
     
     if not os.path.exists(dataset_filepath) or force_overwrite:
-        print('This configuration has not yet been preprocessed.')
-        print('Preprocessing now...')
+        logging.info(f"This configuration has not yet been preprocessed. Preprocessing now...")
         prepare_and_write_synthetic_data(
                                 data = data,
                                 deformation_list = deformation_list,
@@ -574,20 +578,23 @@ def load_create_syntetic_data(data,
                                 z_slices= z_slices
                                 )
         
-        print('Preprocessing done.')
-        # Name of  file
-        print('Loading data from: ', dataset_filepath)
+        
+        logging.info(f"Preprocessing done. Data saved to {dataset_filepath}")
     else:
-        print('Already preprocessed this configuration. Loading now...')
-        # Name file
-        print('Loading data from: ', dataset_filepath)
+        # Already preprocessed load file
+        logging.info(f"Data already preprocessed. Loading file from {dataset_filepath}")
+        
     
     return h5py.File(dataset_filepath, 'r')
 
-#%%
+
 
 if __name__ == '__main__':
-    #%%
+
+    # ==========================================
+    # Change the following parameters if desired
+    # ==========================================
+    
     # Type of deformation
     deformation_list = ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
     
@@ -602,6 +609,10 @@ if __name__ == '__main__':
     # Load the validation data on which we apply the synthetic anomalies
     # Change this
     suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced'
+
+    # ==========================================
+    # End of parameters
+    # ==========================================
     
     only_compressed_sensing = False
     include_compressed_sensing = True
@@ -630,9 +641,3 @@ if __name__ == '__main__':
                         force_overwrite=True,
                         note = f'{suffix}_decreased_interpolation_factor_cube_3')
     
-    
-  
-    
-
-
-

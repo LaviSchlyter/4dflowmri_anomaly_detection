@@ -21,6 +21,7 @@ import copy
 import torch
 import numpy as np
 import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 from scipy import ndimage
 from utils import make_dir_safely, create_all_quadrant_masks_main_axes, compute_all_quadrant_masks_between_axes
 
@@ -34,6 +35,9 @@ def get_quandrant_masks():
     to create quadrant masks based on main axes and angles between axes. The masks are
     then saved to specified directories.
     """
+
+    logging.info('Generating and saving quadrant masks for gradient images...')
+
     # Define paths for input and output data
     gradient_matching_path = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/gradient_matching'
     main_axes_save_basepath = '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/quadrants_main_axes'
@@ -50,6 +54,17 @@ def get_quandrant_masks():
     # Process each gradient image
     for gradient_matching_file in gradient_matching_files:  # Adjust the slicing as needed
         logging.info(f'Processing {gradient_matching_file}')
+        # Extract subject ID from the filename
+        subject_id = gradient_matching_file.split('.npy')[0]
+
+        # Define paths to save the masks
+        main_axes_save_path = os.path.join(main_axes_save_basepath, f'{subject_id}_main_axes_masks.npy')
+        between_axes_save_path = os.path.join(between_axes_save_basepath, f'{subject_id}_between_axes_masks.npy')
+        
+        # Check if both mask files already exist
+        if os.path.exists(main_axes_save_path) and os.path.exists(between_axes_save_path):
+            logging.info(f'Skipping {gradient_matching_file}, masks already exist.')
+            continue  # Skip this file and move on to the next
         
         # Load the gradient image
         gradient_image = np.load(os.path.join(gradient_matching_path, gradient_matching_file))
@@ -109,20 +124,15 @@ def get_quandrant_masks():
         all_masks_main_axes = torch.cat(all_masks_main_axes, dim=0)
         all_masks_between_axes = torch.cat(all_masks_between_axes, dim=0)
 
-        # Extract subject ID from the filename
-        subject_id = gradient_matching_file.split('.npy')[0]
-
-        # Define paths to save the masks
-        main_axes_save_path = os.path.join(main_axes_save_basepath, f'{subject_id}_main_axes_masks.npy')
-        between_axes_save_path = os.path.join(between_axes_save_basepath, f'{subject_id}_between_axes_masks.npy')
 
         # Save the masks as numpy arrays
         np.save(main_axes_save_path, all_masks_main_axes.numpy())
         np.save(between_axes_save_path, all_masks_between_axes.numpy())
-
+    
+    logging.info('Quadrant masks have been generated and saved successfully.')
 
 
 
 if __name__ == '__main__':
     # Run the function to generate and save quadrant masks
-    get_quadrant_masks()
+    get_quandrant_masks()

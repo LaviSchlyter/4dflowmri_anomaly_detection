@@ -30,7 +30,6 @@ from utils import (
     normalize_image,
     make_dir_safely,
     crop_or_pad_normal_slices,
-    extract_slice_from_sitk_image,
     rotate_vectors,
     interpolate_and_slice,
     skeleton_points,
@@ -46,6 +45,42 @@ import config.system as sys_config
 # *** GRADIENT MATCHING TO ALIGN WITH RADIOLOGIST PREDICTION ****
 #====================================================================================
 
+def create_gradient_image(segmentation):
+    """
+    This function creates a gradient image from the segmentation.
+    The gradient image has a shape of the segmentation image with 3 channels.
+    The first channel is a gradient from top to bottom, the second from front to back, and the third from left to right.
+    """
+    sizex, sizey, sizez, sizet= segmentation.shape
+    gradient_top_bottom = np.linspace(0, 1, sizex)[:, None, None, None]
+    gradient_front_back = np.linspace(0, 1, sizey)[None, :, None, None]
+    gradient_left_right = np.linspace(0, 1, sizez)[None, None, :, None]
+    
+    gradient_image = np.zeros((sizex, sizey, sizez, sizet, 4))
+
+    # Assign the gradients to the corresponding channels
+    gradient_image[..., 0] = gradient_top_bottom
+    gradient_image[..., 1] = gradient_front_back
+    gradient_image[..., 2] = gradient_left_right
+
+    return gradient_image
+
+def load_segmentation_files(basepath, train_test):
+    """
+    Loads the segmentation files from the given basepath and train_test.
+    """
+    if ['train', 'val'].__contains__(train_test):
+        segmentation_path = basepath + '/final_segmentations/train_val_balanced'
+    elif train_test == 'test':
+        segmentation_path = basepath + '/final_segmentations/test_balanced'
+    else:
+        raise ValueError('train_test must be either train, val or test')
+    
+    seg_path_files = os.listdir(segmentation_path)
+    # Sort
+    seg_path_files.sort()
+    return seg_path_files, segmentation_path
+
 def prepare_and_write_gradient_matching_data_bern(basepath, suffix =''):
     """
     This function will for each subject in the test set, create a gradient from foot to head, left to right and back to front.
@@ -53,14 +88,12 @@ def prepare_and_write_gradient_matching_data_bern(basepath, suffix =''):
     that we look at the correct anterior-posterior and left-right directions matching the validation from the radiologist.
     """
 
+    logging.info('Preparing gradient matching data...')
+
     common_image_shape = [36, 36, 64, 24, 4] # [x, y, z, t, num_channels]
     end_shape = [32, 32, 64, 24, 4]
 
-    segmentation_path = basepath + '/final_segmentations/test_balanced'
-
-    # sort the files
-    seg_path_files = os.listdir(segmentation_path)
-    seg_path_files.sort()
+    seg_path_files, segmentation_path = load_segmentation_files(basepath, 'test')
 
     save_gradient_matching_path = sys_config.project_code_root + 'data' + f'/gradient_matching{suffix}'
     make_dir_safely(save_gradient_matching_path)
@@ -76,18 +109,7 @@ def prepare_and_write_gradient_matching_data_bern(basepath, suffix =''):
         segmentation = np.load(os.path.join(segmentation_path, patient))
 
         # Create an image with the gradients
-        sizex, sizey, sizez, sizet= segmentation.shape
-        gradient_top_bottom = np.linspace(0, 1, sizex)[:, None, None, None]
-        gradient_front_back = np.linspace(0, 1, sizey)[None, :, None, None]
-        gradient_left_right = np.linspace(0, 1, sizez)[None, None, :, None]
-        
-        
-        gradient_image = np.zeros((sizex, sizey, sizez, sizet, 4))
-
-        # Assign the gradients to the corresponding channels
-        gradient_image[..., 0] = gradient_top_bottom
-        gradient_image[..., 1] = gradient_front_back
-        gradient_image[..., 2] = gradient_left_right
+        gradient_image = create_gradient_image(segmentation)
 
 
         if suffix == '_seg':
@@ -155,6 +177,9 @@ def prepare_and_write_gradient_matching_data_bern(basepath, suffix =''):
 
         # Save the gradient out image
         np.save(save_gradient_matching_path + '/' + patient.replace('seg_',''), gradient_image_out)
+    
+    logging.info('Gradient matching data prepared.')
+
     return 0
 
 
@@ -613,6 +638,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     - unwrapped (bool): Whether to unwrap the phase. TODO: Does not work as expected. 30.05.24
     """
     
+    logging.info('Preparing masked sliced data...')
+
     # TODO: Could be updated since we have received new data  30.05.24
     common_image_shape = [36, 36, 64, 24, 4] # [x, y, z, t, num_channels]
     end_shape = [32, 32, 64, 24, 4] # for x and y axes, we can remove zeros from the sides such that the dimensions are divisible by 16
@@ -955,6 +982,8 @@ def prepare_and_write_masked_data_sliced_bern(basepath,
     # close the hdf5 file
     # ==========================================
     hdf5_file.close()
+
+    logging.info('Finished preparing masked sliced data.')
 
     return 0
 
@@ -1502,6 +1531,10 @@ if __name__ == '__main__':
     savepath = sys_config.project_code_root + "data"
     make_dir_safely(savepath)
 
+
+    # Create folder for logs in current directory
+    make_dir_safely(os.path.join(os.getcwd(), 'preprocess_logs'))
+
     
     prepare_and_write_gradient_matching_data_bern(basepath = basepath, suffix = '')
 
@@ -1511,6 +1544,7 @@ if __name__ == '__main__':
     masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='train', suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     masked_sliced_data_validation_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='val', suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     masked_sliced_data_test_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=1, train_test='test', suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
+    #masked_sliced_data_train_all.close
 
     masked_sliced_data_train_all = load_masked_data_sliced(basepath, idx_start=0, idx_end=41, train_test='train', suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
     masked_sliced_data_validation_all = load_masked_data_sliced(basepath, idx_start=41, idx_end=51, train_test='val', suffix = '_without_rotation_with_cs_skip_updated_ao_S10_balanced', include_compressed_sensing = True, force_overwrite= False, skip = True, updated_ao = True, smoothness = 10)
