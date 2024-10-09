@@ -1,0 +1,44 @@
+# Between parathensis is the default value used for paper
+
+#Give indices of subjects to be used for training, validation and testing
+# Train and validation share a folder
+idx_start_train: 0
+idx_end_train: 41
+
+idx_start_val: 41
+idx_end_val: 51
+
+# Test is a separate folder
+idx_start_test: 0
+idx_end_test: 54
+
+preprocess_method: masked_slice
+
+# Data to include
+include_compressed_sensing_data: True # (Set to True)
+use_only_compressed_sensing_data: False # (Set to False)
+
+# Force to overwrite the preprocessed files (Set to False)
+force_overwrite: False
+
+
+# Skipping every 2 points on centerline for smoother interpolation (Set to True)
+skip_points_on_centerline: True
+
+# Using updated method to order points rather than just quadrant based (Set to True)
+use_updated_ordering_method: True
+
+# Smoothing parameter for the interpolation of the centerline (Set to 10)
+smoothing: 10
+
+# Whether to rotate the vectors with the slices (Set to False)
+with_rotation: False
+
+# Synthetic anomalies
+deformation_list: ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
+# If necessary
+extra_synthetic_note: '' # (Set to '') or ('_{anything you want}')
+
+
+
+

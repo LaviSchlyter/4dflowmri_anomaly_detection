@@ -1,0 +1,43 @@
+#==============================================================================
+# Define experimental settings for the model, preprocessing, and specific experimental times
+#==============================================================================
+
+filters:
+  model_name: "simple_conv"                  # Model name to be used in experiments
+  preprocess_method: "masked_slice"          # Preprocessing method applied to the data
+  specific_times:                            # Specific timestamps to filter experimental data
+    - "20240530-1325" 
+    - "20240530-1331"
+    - "20240530-1342"
+    - "20240530-1344"
+    - "20240530-1347"
+    
+backtransform_anomaly_scores_bool: False    # Boolean to decide if backtransformation of anomaly scores is applied
+backtransform_all: False                    # Boolean to apply backtransformation to all data, if true
+# List of specific patients for backtransformation if not applied to all
+backtransform_list: [
+    'MACDAVD_137_', 'MACDAVD_137', 'MACDAVD_131', 'MACDAVD_131_', 'MACDAVD_135_',
+    'MACDAVD_135', 'MACDAVD_133_', 'MACDAVD_133', 'MACDAVD_143_', 'MACDAVD_143', 
+    'MACDAVD_206_', 'MACDAVD_206'
+]
+
+visualize_inference_plots: False            # Boolean to control the visualization of inference plots
+
+#==============================================================================
+# Define paths used throughout the project
+#==============================================================================
+
+project_code_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/'
+project_data_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady'
+
+log_root: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/logs'
+models_dir: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/Saved_models'
+seg_data_path: '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/segmentations/final_segmentations'
+subject_dict_path: '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/preprocessed'
+
+quadrants_between_axes_path: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/quadrants_between_axes'
+
+# Path to raw images used for processing
+img_path: '/usr/bmicnas02/data-biwi-01/jeremy_students/data/inselspital/kady/preprocessed/patients/numpy'
+# Path to geometry information used for backtransformation
+geometry_path: '/usr/bmicnas02/data-biwi-01/jeremy_students/lschlyter/4dflowmri_anomaly_detection/data/geometry_for_backtransformation'

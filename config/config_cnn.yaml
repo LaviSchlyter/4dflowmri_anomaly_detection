@@ -4,12 +4,18 @@
 #note:_all_poisson_tr_val
 note: ''
 use_wandb: False
-seed: 10
+seed: 5
 
-suffix_data: '_without_rotation_with_cs_skip_updated_ao_S10_balanced'
+# Through selection the following, you decide which dataset to use (as prepared in the preprocessing steps)
+include_compressed_sensing_data: True # (Set to True)
+use_only_compressed_sensing_data: False # (Set to False)
+skip_points_on_centerline: True # Skipping every 2 points on centerline for smoother interpolation (Set to True)
+use_updated_ordering_method: True # Using updated method to order points rather than just quadrant based (Set to True)
+smoothing: 10 # Smoothing parameter for the interpolation of the centerline (Set to 10)
+with_rotation: False # Whether to rotate the vectors with the slices (Set to False)
 
 # This is when loading the synthetic data, if we want to load a specific one
-synthetic_data_note: '_without_rotation_with_cs_skip_updated_ao_S10_balanced_decreased_interpolation_factor_cube_3' 
+synthetic_data_note: '_decreased_interpolation_factor_cube_3' 
 # =================================== TRAINING SETTINGS ===================================
 batch_size: 8
 
@@ -18,7 +24,7 @@ spatial_size_y: 32
 spatial_size_z: 64
 spatial_size_t: 24
 
-epochs: 1500
+epochs: 5
 
 # Optimizer settings
 weight_decay: 0.0
@@ -51,6 +57,10 @@ z_dim: 2048
 # Use synthetic data for validation
 use_synthetic_validation: True
 
+# What kind of synthetic data do we introduce on the fly during training
+blending:
+  method: "mixed_grad"  # Options: "mixed_grad", "source_grad", "interpolation"
+
 
 # Data indexes
 idx_start_tr: 0
@@ -63,39 +73,8 @@ idx_end_vl: 51
 # During training, if some deformations are used, we want to exclude them from the validation set.
 # Below are the indices between which different deformations are removed:
 #
-# We have 7 deformations: [None, noisy, deformation, hollow circle, patch_interpolation, poisson_w_mixing, poisson_wo_mixing]
-# Each has 64 slices for 7 patients (total 3136 slices)
-# For 10 patients, the total is 4480 slices
-#
-# Exclusion Ranges (7 subjects):
-# - 1792, 2240: Remove patch interpolation
-# - 2240, 3136: Remove all poisson (with and without mixing)
-# - 2240, 2688: Remove poisson with mixing
-# - 2688, 3136: Remove poisson without mixing
-#
-# Exclusion Ranges (10 subjects):
-# - 2560, 3200: Remove patch interpolation
-# - 3200, 4480: Remove all poisson (with and without mixing)
-# - 3200, 3840: Remove poisson with mixing
-# - 3840, 4480: Remove poisson without mixing
 
-
-# Index Ranges for Removing Deformations:
-# ---------------------------------------
-
-# USED IN PAPER
-# - indices_to_remove: [3200, 3840]  # For 10 subjects (all people) - Remove poisson with mixing 
-indices_to_remove: [3200, 3840]
-
-
-# Experiments
-# - indices_to_remove: [2240, 2688]  # For 7 subjects (non-compressed sensing) - Remove poisson with mixing 
-# - indices_to_remove: [1280, 1536]  # For 4 subjects (compressed sensing only) - Remove poisson with mixing 
-# - indices_to_remove: [3200, 4480]  # For 10 subjects (all people) - Remove all poisson deformations
-# - indices_to_remove: [2240, 3136]  # For 7 subjects (non-compressed sensing) - Remove all poisson deformations
-# - indices_to_remove: [2240, 1792]  # For 4 subjects (compressed sensing only) - Remove all poisson deformations
-# Reconstruction-based
-#indices_to_remove: []
+deformation_list: ['None', 'noisy', 'deformation', 'hollow circle', 'patch_interpolation', 'poisson_with_mixing', 'poisson_without_mixing']
 
 
 # Metrics to use saving best model (all are always saved/computed)
@@ -115,12 +94,8 @@ validation_viz_frequency: 100
 
 # # =================================== CONTINUE TRAINING ===================================
 model_directory : 'Saved_models/simple_conv/masked_slice/20240530-1412_simple_conv_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_5_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_balanced_decreased_interpolation_factor_cube_3'
-# Uncomment if continue running else please comment.... TODO: Improve this way of doing
-model_name : #20240530-1412_simple_conv_masked_slice_lr1.000e-03-e1500-bs8-gf_dim8-daFalse-f100__SEED_5_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_balanced_decreased_interpolation_factor_cube_3
 latest_model_epoch : 110
 # Check best_val_score in the log from previously run model
 best_val_score: 0.5
-model: 
-checkpoint:
 continue_training: False
-preprocess_method: 
+
