@@ -352,8 +352,8 @@ def skeleton_points(segmented, dilation_k=0, erosion_k = 0):
     # Average the segmentation over time (the geometry should be the same over time)
     avg = np.average(segmented, axis = 3)
     if dilation_k > 0:
-        avg = binary_erosion(avg, selem=np.ones((erosion_k, erosion_k,erosion_k)))
-        avg = dilation(avg, selem=np.ones((dilation_k, dilation_k,dilation_k)))
+        avg = binary_erosion(avg, footprint=np.ones((erosion_k, erosion_k,erosion_k)))
+        avg = dilation(avg, footprint=np.ones((dilation_k, dilation_k,dilation_k)))
         
     # Compute the centerline points of the skeleton
     skeleton = skeletonize_3d(avg[:,:,:])

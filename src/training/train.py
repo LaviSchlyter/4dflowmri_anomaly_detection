@@ -200,109 +200,112 @@ if __name__ ==  "__main__":
     
     # ================================================
     if config['use_wandb']:
-
-        with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags):
-            config = wandb.config
-            print('after_init', config['model_name'])
-
-            # Check if it is a sweep
-            sweep_id = os.environ.get("WANDB_SWEEP_ID")
-            if sweep_id:
-                # We add a level for the sweep name 
-                config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], sweep_id,config['model_name'])
-            else:
-                config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], config['model_name'])
-            log_dir = config['exp_path']
-
+        wandb_mode = 'online'
     else:
-        config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], config['model_name'])
+        wandb_mode = 'disabled'
+
+    with wandb.init(project="4dflowmri_anomaly_detection", name=config['model_name'], config=config, tags= tags, mode=wandb_mode):
+        config = wandb.config
+        print('after_init', config['model_name'])
+
+        # Check if it is a sweep
+        sweep_id = os.environ.get("WANDB_SWEEP_ID")
+        if sweep_id:
+            # We add a level for the sweep name 
+            config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], sweep_id,config['model_name'])
+        else:
+            config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], config['model_name'])
         log_dir = config['exp_path']
-        # ================================================
-        # ======= LOGGING CONFIGURATION ==================
-        # ================================================
-        project_data_root = config_sys.project_data_root
-        project_code_root = config_sys.project_code_root
-        # Create the log directory if it does not exist
-        make_dir_safely(log_dir)
-        logging.info('=============================================================================')
-        logging.info(f"Logging to {log_dir}")
-        logging.info('=============================================================================')
-        # ================================================
-        # ======= DATA CONFIGURATION LOADING =============
-        # ================================================
 
-        # Check if there is data leakage (some people in both train and test)
-        verify_leakage()
 
-        # Create the suffix    
-        suffix = create_suffix(config)
+    config['exp_path'] = os.path.join(config_sys.log_experiments_root, config['model'],config['preprocess_method'], config['model_name'])
+    log_dir = config['exp_path']
+    # ================================================
+    # ======= LOGGING CONFIGURATION ==================
+    # ================================================
+    project_data_root = config_sys.project_data_root
+    project_code_root = config_sys.project_code_root
+    # Create the log directory if it does not exist
+    make_dir_safely(log_dir)
+    logging.info('=============================================================================')
+    logging.info(f"Logging to {log_dir}")
+    logging.info('=============================================================================')
+    # ================================================
+    # ======= DATA CONFIGURATION LOADING =============
+    # ================================================
 
-        # Load the data
-        data_dict = load_data(config, config_sys, idx_start_tr=config['idx_start_tr'], idx_end_tr=config['idx_end_tr'], idx_start_vl=config['idx_start_vl'], idx_end_vl=config['idx_end_vl'], suffix = suffix)
-        images_tr = data_dict['images_tr']
-        images_vl = data_dict['images_vl']
+    # Check if there is data leakage (some people in both train and test)
+    verify_leakage()
 
-        # Load s data for validation if needed
-        if config['use_synthetic_validation']:
-            images_vl = load_syntetic_data(preprocess_method = config['preprocess_method'], idx_start=config['idx_start_vl'], idx_end=config['idx_end_vl'], sys_config = config_sys, note = suffix + config['synthetic_data_note'])
-            logging.info(f"Using synthetic validation data with shape: {images_vl['images'].shape}")
-        
-        # ================================================
-        # Initialize the model, training parameters, model name and logging
-        # ================================================
-        # Check if self-supervised or not
-        if config['self_supervised']:
-            config['out_channels'] = 1
-        else:
-            config['out_channels'] = 4
-        config['in_channels'] = 4   
+    # Create the suffix    
+    suffix = create_suffix(config)
 
-        model_mapping = {
-            'simple_conv': SimpleConvNet,
-            'conv_interpolate': SimpleConvNetInterpolate,
-            'vae_convT': VAE_convT,
-            'cond_vae': CondVAE,
-            'cond_conv': CondConv,
-            'conv_with_aux': ConvWithAux,
-            'conv_enc_dec_aux': ConvWithEncDecAux,
-            'deep_conv_with_aux': ConvWithDeepAux,
-            'deep_conv_enc_dec_aux': ConvWithDeepEncDecAux,
-            'deeper_conv_enc_dec_aux': ConvWithDeeperEncDecAux,
-            'deeper_bn_conv_enc_dec_aux': ConvWithDeeperBNEncDecAux
-        }
+    # Load the data
+    data_dict = load_data(config, config_sys, idx_start_tr=config['idx_start_tr'], idx_end_tr=config['idx_end_tr'], idx_start_vl=config['idx_start_vl'], idx_end_vl=config['idx_end_vl'], suffix = suffix)
+    images_tr = data_dict['images_tr']
+    images_vl = data_dict['images_vl']
 
-        if config['model'] in model_mapping:
-            model_class = model_mapping[config['model']]
-            model = model_class(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
-        else:
-            raise ValueError(f"Unknown model: {config['model']}")
-        
-        
-        if config['continue_training']:
-            continue_train_path = os.path.join(project_code_root, config["model_directory"])
-            model = load_model(model, continue_train_path, config, device=device)
-            already_completed_epochs = config['latest_model_epoch']
-            
-        else:
-            already_completed_epochs = 0
-
-        
-        # Get the indices to exclude based on the training deformations
-        config = get_exclusion_indices(config)
-                    
-        # ================================================
-        # Print summary of the model
-        # ================================================
-        logging.info('=======================================================')
-        logging.info('Details of the model architecture')
-        logging.info('=======================================================')
+    # Load s data for validation if needed
+    if config['use_synthetic_validation']:
+        images_vl = load_syntetic_data(preprocess_method = config['preprocess_method'], idx_start=config['idx_start_vl'], idx_end=config['idx_end_vl'], sys_config = config_sys, note = suffix + config['synthetic_data_note'])
+        logging.info(f"Using synthetic validation data with shape: {images_vl['images'].shape}")
     
-        input_dict= {'input_images': torch.zeros((1, 4, 32, 32, 24)).to(device).float(), 'batch_z_slice': torch.zeros((1,)).to(device).float(), 
-                     'adjacent_batch_slices':torch.zeros((1, 12, 32, 32, 24)).to(device), 'rotation_matrix': torch.zeros((1, 3, 3)).to(device).float()}
-        logging.info(summary(model, input_dict, show_input=False))
+    # ================================================
+    # Initialize the model, training parameters, model name and logging
+    # ================================================
+    # Check if self-supervised or not
+    if config['self_supervised']:
+        config['out_channels'] = 1
+    else:
+        config['out_channels'] = 4
+    config['in_channels'] = 4   
 
+    model_mapping = {
+        'simple_conv': SimpleConvNet,
+        'conv_interpolate': SimpleConvNetInterpolate,
+        'vae_convT': VAE_convT,
+        'cond_vae': CondVAE,
+        'cond_conv': CondConv,
+        'conv_with_aux': ConvWithAux,
+        'conv_enc_dec_aux': ConvWithEncDecAux,
+        'deep_conv_with_aux': ConvWithDeepAux,
+        'deep_conv_enc_dec_aux': ConvWithDeepEncDecAux,
+        'deeper_conv_enc_dec_aux': ConvWithDeeperEncDecAux,
+        'deeper_bn_conv_enc_dec_aux': ConvWithDeeperBNEncDecAux
+    }
+
+    if config['model'] in model_mapping:
+        model_class = model_mapping[config['model']]
+        model = model_class(in_channels=config['in_channels'], gf_dim=config['gf_dim'], out_channels=config['out_channels']).to(device)
+    else:
+        raise ValueError(f"Unknown model: {config['model']}")
+    
+    
+    if config['continue_training']:
+        continue_train_path = os.path.join(project_code_root, config["model_directory"])
+        model = load_model(model, continue_train_path, config, device=device)
+        already_completed_epochs = config['latest_model_epoch']
         
-        # Train 
-        optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'], betas=(config['beta1'], config['beta2']))
-        train(model, data_dict, images_vl, log_dir, already_completed_epochs, config, device, optimizer)
+    else:
+        already_completed_epochs = 0
+
+    
+    # Get the indices to exclude based on the training deformations
+    config = get_exclusion_indices(config)
+                
+    # ================================================
+    # Print summary of the model
+    # ================================================
+    logging.info('=======================================================')
+    logging.info('Details of the model architecture')
+    logging.info('=======================================================')
+
+    input_dict= {'input_images': torch.zeros((1, 4, 32, 32, 24)).to(device).float(), 'batch_z_slice': torch.zeros((1,)).to(device).float(), 
+                    'adjacent_batch_slices':torch.zeros((1, 12, 32, 32, 24)).to(device), 'rotation_matrix': torch.zeros((1, 3, 3)).to(device).float()}
+    logging.info(summary(model, input_dict, show_input=False))
+
+    
+    # Train 
+    optimizer = torch.optim.Adam(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'], betas=(config['beta1'], config['beta2']))
+    train(model, data_dict, images_vl, log_dir, already_completed_epochs, config, device, optimizer)
 

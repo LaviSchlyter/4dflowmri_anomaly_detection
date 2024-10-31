@@ -370,7 +370,7 @@ if __name__ == '__main__':
         compressed_sensing_df = subject_df[subject_df['Compressed_sensing'] == True]
         non_compressed_sensing_df = subject_df[subject_df['Compressed_sensing'] == False]
 
-        logging.info('Analysis across compressed sensing acquisitions:')
+        logging.info('\n \n Analysis across compressed sensing acquisitions:')
         # Compute metrics for compressed sensing acquisitions
         y_true_compressed_sensing, y_scores_compressed_sensing, auc_roc_compressed_sensing = compute_metrics(compressed_sensing_df, 'CS', results_summary)
 
@@ -379,7 +379,7 @@ if __name__ == '__main__':
         results_summary['p-value CS AUC-ROC (Permutations)'].append(p_value_compressed_sensing)
 
         # Compute metrics for non-compressed sensing acquisitions
-        logging.info('Analysis across non-compressed sensing acquisitions:')
+        logging.info('\n\nAnalysis across non-compressed sensing acquisitions:')
         y_true_non_compressed_sensing, y_scores_non_compressed_sensing, auc_roc_non_compressed_sensing = compute_metrics(non_compressed_sensing_df, 'non-CS', results_summary)
 
         # Permutation test for AUC-ROC

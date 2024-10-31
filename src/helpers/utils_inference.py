@@ -403,6 +403,20 @@ def evaluate_predictions(mask_quadrants, anomaly_scores, nested_dict, subject_na
 
 
 def permutation_test_auc_roc(y_true_labels, y_scores, n_permutations=1000, random_seed=42):
+    """
+    Perform a permutation test for the AUC-ROC score.
+    
+    Parameters:
+    - y_true_labels: True labels for the dataset.
+    - y_scores: Predicted scores for the dataset.
+    - n_permutations: Number of permutations to perform (default is 1000).
+    - random_seed: Seed for the permutation randomness, kept constant across experiments 
+                   to ensure consistent permutation results (this seed is independent of 
+                   the experimental seed used for model training).
+    
+    Returns:
+    - p_value: The p-value of the permutation test.
+    """
     np.random.seed(random_seed)
 
     original_auc_roc = roc_auc_score(y_true_labels, y_scores)
