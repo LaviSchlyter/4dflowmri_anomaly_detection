@@ -1,79 +1,74 @@
-
 # Anomaly Detection in 4D Flow MRI's
-
-
 
 This project presents a deep learning-based approach for the detection of anomalies in 4D flow MRI data. By employing self-supervised learning and reconstruction-based techniques, our model efficiently identifies abnormal blood flow patterns. The repository contains the code, data processing scripts, and evaluation tools developed during the study.
 
-## Authors
+## Anomaly detection 
+In this part, our main is to detect anomalies within the ascending aorta.
 
-- [@LaviniaSchlyter](https://github.com/LaviSchlyter)
+### Pre-processing
+We need to pre-process the data by taking the segmented aorta and extracting cross sectional slices. 
 
+1. By running `preprocess.sh `, we run the default preprocessing used for the article where we slice and mask the aorta using a dilated version of the segmetation. You can modify the parameters `config_preprocessing.yaml` in `config` directory.
+```bash
+cd scripts
 
-## How to run - simple version
+sbatch preprocess.sh 
 
-#### Config run
-
-Got to `config/config_cnn.yaml` to set configurations. 
-```yaml
-seed: 5 #5,10,15,20,25
-suffix_data: '_without_rotation_with_cs_skip_updated_ao_S10_balanced' # used for paper
-# If SSL
-self_supervised: True
-use_synthetic_validation: True
-# If RB
-self_supervised: False
-use_synthetic_validation: False
-
-# Depending on synthetic anomalies introduced in training we need to remove indices from validation. For the paper, we use in training Poisson blending with gradient mixing in training so we remove in validation. We have 10 subjects in validation.
-# Go in utils.py `apply_blending` function, if desire to change 
-indices_to_remove: [3200, 3840]
-
+# Logs will appear in `logs/preprocess_logs`
 ```
+This will create hdf5 files within the `data` directory. These files will have the shape [#patients*#slices, 32, 32, 24, 4] ([#patients*#slices, x, y, z (along aorta), t, channels]).  The channels contain the components of the velocity as well as the 'intensity'.  The #slices is typically chosen here to be 64.
+  
+a) We save the geometric information of the image through a dictionary for each slice in order to allow for backtransformation (slices are put back in their original image). `geometry_for_backtransformation`
+b) For each image we create an image with a gradient from foot to head, left to right and back (posterior) to front (anterior). Using the segmetation of the different patients, it will also do the slicing procedure, this is to ensure that what is perceived by anterior by the radiologist will match our anterior as the slicing operation also includes rotation. `gradient_matching`
+c) The regional validation process was done through comparing quadrants to Inselspital. Quadrants for each patient is stored in `quadrants_between_axes` and `quadrants_main_axes`
 
-#### Run bash script
+### Training model
+
+2. To change the configuration of the run (epochs, seed, self-supervised, etc..), go to `config/config_cnn.yaml`, to change the preprocess method or model to run, go into `scripts/train.sh` (only CNN model is given for article).
+
+3. To train the model:
 ```python
-  # Run the bash file which launches the `run.py` onto the cluster
-  cd run_scripts
-  sbatch run_SimpleConvNet.sh
+  cd scripts
+  sbatch train.sh
 
-  # Logs appear in `sbatch_logs/sbatch_train_logs`
-```
-#### Running inference
-Models are saved in `Saved_models` directory
-
-- Go to `inference_experiments_list.py`: Create a dictionary with the names of the experiments under the name ```short_experiments_with_cs``` or without the `short` (this will give the correct indices on the dataset used). `with_cs` extension because we also include compressed sensing data
-
-- Go to `inference_test.py`. Select the desired parameters. `backtransform_anomaly_scores_bool`, `visualize_inference_plots` etc
-
-```python
-  # Run
-  sbatch inference_test
-
-  # Logs appear in `sbatch_logs/sbatch_inference_logs`
+# Logs appear in `logs/train_logs`
+# Models are saved in `Saved_models` directory
 ```
 
-#### View results
+### Running inference
+ 
+ 4. Configure the inference process via the `config/config_inference.yaml` file. Key parameters include model selection, preprocessing details, and visualization controls, among others. Here’s a brief overview of essential settings:
 
-Results are stored in `Results/Evaluation/{model}/{preprocess_method}/{experiment}` 
+- **model_name**: Specifies the model to be used for inference.
+- **preprocess_method**: Defines the method for data preprocessing.
+- **visualize_inference_plots**: Toggle to enable/disable the generation of plot outputs during inference.
 
-**for eg.** `Results/Evaluation/simple_conv/masked_slice/20240530-1325_simple_conv_masked_slice_SSL_lr1.000e-03-e1500-bs8-gf_dim8-daFalse__SEED_5_2Dslice__without_rotation_with_cs_skip_updated_ao_S10_balanced_decreased_interpolation_factor_cube_3`
+5. Run the script with 
+```bash
+cd scripts
 
-_They contain:_
+sbatch inference.sh
 
-1. `log_test.txt`: log of inference run
-2. `test` folder with inputs, outputs, backtransformed outputs and all visualizations
-3. `subject_df_with_anomaly_scores_{seed}.csv`: file containing ID, Age, sex, anomaly scores, p-values of permutation tests, region based level prediction etc
-4. `subject_df_with_anomaly_scores_simple.csv`: Simplified version
+# Logs appear in `logs/inference_logs`
+# Results are shown in `Results` directory
+```
+
+The results contain:
+
+a. `log_test.txt`: log of inference run
+
+b. `test` directory with inputs, outputs, backtransformed outputs and all visualizations
+
+c. `subject_df_with_anomaly_scores_{seed}.csv`: file containing ID, Age, sex, anomaly 
+scores, p-values of permutation tests, region based level prediction etc
+
+d. `subject_df_with_anomaly_scores_simple.csv`: Simplified version
+
+6. To visualize the aggregated results over seeds: `Results/Aggregated_results_across_seeds/Basic_visualization_across_seeds.ipynb`
 
 
-#### View aggregated results over seeds
-Notebook to view results simple results across seeds
-`Results/Aggregated_results_across_seeds/Basic_visualization_across_seeds.ipynb`
+ 
 
-
-## Anomaly detection pipeline
-Here we present step by step what should be run from final segmentation to cross sectional slices, model results, back-transformation and Paraview visualization.
 
 
 
